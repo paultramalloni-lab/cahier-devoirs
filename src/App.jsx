@@ -33,6 +33,7 @@ export default function App() {
   const [tab, setTab] = useState("devoirs");
   const [selectedSubject, setSelectedSubject] = useState(null);
   const [homework, setHomework] = useState([]);
+  const [userDone, setUserDone] = useState([]); // Nouveau : stocke les IDs des devoirs faits par l'utilisateur
   const [messages, setMessages] = useState([]);
   const [newHW, setNewHW] = useState({ text:"", date:"" });
   const [newMsg, setNewMsg] = useState("");
@@ -54,7 +55,7 @@ export default function App() {
   const fileInputRef = useRef(null);
   const threadFileRef = useRef(null);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [usernameSet]); // Recharge si le nom change
 
   useEffect(() => {
     const channel = supabase.channel("messages")
@@ -81,17 +82,29 @@ export default function App() {
     const channel = supabase.channel("devoirs")
       .on("postgres_changes", { event:"*", schema:"public", table:"devoirs" }, () => loadHomework())
       .subscribe();
-    return () => supabase.removeChannel(channel);
-  }, []);
+    const progressChannel = supabase.channel("user_progress")
+      .on("postgres_changes", { event:"*", schema:"public", table:"user_progress" }, () => loadUserProgress())
+      .subscribe();
+    return () => {
+        supabase.removeChannel(channel);
+        supabase.removeChannel(progressChannel);
+    };
+  }, [username]);
 
   async function loadAll() {
-    await Promise.all([loadHomework(), loadMessages(), loadThreads()]);
+    await Promise.all([loadHomework(), loadUserProgress(), loadMessages(), loadThreads()]);
     setLoading(false);
   }
 
   async function loadHomework() {
     const { data } = await supabase.from("devoirs").select("*").order("created_at");
     if (data) setHomework(data);
+  }
+
+  async function loadUserProgress() {
+    if (!username) return;
+    const { data } = await supabase.from("user_progress").select("todo_id").eq("username", username.trim());
+    if (data) setUserDone(data.map(d => d.todo_id));
   }
 
   async function loadMessages() {
@@ -157,13 +170,21 @@ export default function App() {
     setNewHW({ text:"", date:"" });
   }
 
-  async function toggleDone(id, done) {
-    await supabase.from("devoirs").update({ done: !done }).eq("id", id);
-    setHomework(prev => prev.map(h => h.id === id ? {...h, done:!done} : h));
+  // MODIFIÉ : Gère la coche individuelle dans user_progress
+  async function toggleDone(todoId) {
+    if (userDone.includes(todoId)) {
+      await supabase.from("user_progress").delete().eq("todo_id", todoId).eq("username", username.trim());
+      setUserDone(prev => prev.filter(id => id !== todoId));
+    } else {
+      await supabase.from("user_progress").insert({ todo_id: todoId, username: username.trim() });
+      setUserDone(prev => [...prev, todoId]);
+    }
   }
 
   async function deleteHW(id) {
     await supabase.from("devoirs").delete().eq("id", id);
+    // On nettoie aussi les coches liées pour éviter de polluer la base
+    await supabase.from("user_progress").delete().eq("todo_id", id);
     setHomework(prev => prev.filter(h => h.id !== id));
   }
 
@@ -205,7 +226,8 @@ export default function App() {
   }
 
   const hwForSubject = id => homework.filter(h => h.subject_id === id);
-  const pending = id => hwForSubject(id).filter(h => !h.done).length;
+  // MODIFIÉ : Calcule les devoirs en attente en fonction des coches de l'utilisateur
+  const pending = id => hwForSubject(id).filter(h => !userDone.includes(h.id)).length;
   const totalPending = SUBJECTS.reduce((a, s) => a + pending(s.id), 0);
   const subject = SUBJECTS.find(s => s.id === selectedSubject);
   const threadsForSubject = id => threads.filter(t => t.subject_id === id);
@@ -239,13 +261,13 @@ export default function App() {
 
   const UsernameBox = () => !usernameSet ? (
     <div style={st.userBox}>
-      <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>Ton prénom (optionnel)</div>
+      <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>Ton prénom (obligatoire pour cocher les devoirs)</div>
       <div style={{ display:"flex", gap:8 }}>
         <input style={{ ...st.input, flex:1 }} value={username} onChange={e => setUsername(e.target.value)}
           onKeyDown={e => e.key==="Enter" && (localStorage.setItem("username", username.trim() || "Anonyme"), setUsernameSet(true))}
           placeholder="Ton prénom..." />
         <button style={st.btn()} onClick={() => { localStorage.setItem("username", username.trim() || "Anonyme"); setUsernameSet(true); }}>
-          {username.trim() ? "Confirmer" : "Anonyme"}
+          Valider
         </button>
       </div>
     </div>
@@ -256,7 +278,7 @@ export default function App() {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem" }}>
         <div>
           <h1 style={st.h1}>📚 Mon Cahier de Devoirs</h1>
-          <p style={st.subtitle}>{totalPending > 0 ? `${totalPending} devoir${totalPending>1?"s":""} en attente` : "Tout est à jour ✓"}</p>
+          <p style={st.subtitle}>{totalPending > 0 ? `${totalPending} devoir${totalPending>1?"s":""} en attente pour toi` : "Tout est à jour ✓"}</p>
         </div>
       </div>
 
@@ -271,7 +293,7 @@ export default function App() {
         <div style={st.grid}>
           {SUBJECTS.map(sub => {
             const p = pending(sub.id);
-            const first = hwForSubject(sub.id).filter(h=>!h.done)[0];
+            const first = hwForSubject(sub.id).filter(h=>!userDone.includes(h.id))[0];
             return (
               <div key={sub.id} style={st.card(sub.color, p > 0)} onClick={() => setSelectedSubject(sub.id)}
                 onMouseEnter={e => e.currentTarget.style.boxShadow="0 4px 12px rgba(0,0,0,0.08)"}
@@ -289,6 +311,7 @@ export default function App() {
       {tab === "devoirs" && subject && (
         <div>
           <button style={st.backBtn} onClick={() => setSelectedSubject(null)}>← Toutes les matières</button>
+          <UsernameBox />
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:"1.5rem" }}>
             <span style={{ fontSize:32 }}>{subject.icon}</span>
             <div>
@@ -308,11 +331,11 @@ export default function App() {
             <div style={{ textAlign:"center", color:"#9ca3af", fontSize:14, padding:"2rem 0" }}>Aucun devoir pour cette matière 🎉</div>
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {[...hwForSubject(subject.id).filter(h=>!h.done), ...hwForSubject(subject.id).filter(h=>h.done)].map(item => (
-                <div key={item.id} style={st.hwItem(item.done)}>
-                  <input type="checkbox" checked={item.done} onChange={() => toggleDone(item.id, item.done)} style={{ width:16, height:16, cursor:"pointer", flexShrink:0, accentColor:subject.color }} />
+              {[...hwForSubject(subject.id).filter(h=>!userDone.includes(h.id)), ...hwForSubject(subject.id).filter(h=>userDone.includes(h.id))].map(item => (
+                <div key={item.id} style={st.hwItem(userDone.includes(item.id))}>
+                  <input type="checkbox" checked={userDone.includes(item.id)} onChange={() => toggleDone(item.id)} style={{ width:16, height:16, cursor:"pointer", flexShrink:0, accentColor:subject.color }} />
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontSize:14, color:"#111", textDecoration:item.done?"line-through":"none" }}>{item.text}</div>
+                    <div style={{ fontSize:14, color:"#111", textDecoration:userDone.includes(item.id)?"line-through":"none" }}>{item.text}</div>
                     <div style={{ display:"flex", gap:10, marginTop:2, flexWrap:"wrap" }}>
                       {item.date && <span style={{ fontSize:11, color:subject.color }}>Pour le {new Date(item.date+"T12:00:00").toLocaleDateString("fr-FR")}</span>}
                       {item.added_by && <span style={{ fontSize:11, color:"#9ca3af" }}>par {item.added_by}</span>}
