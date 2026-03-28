@@ -34,8 +34,8 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [newHW, setNewHW] = useState({ text:"", date:"" });
   const [newMsg, setNewMsg] = useState("");
-  const [username, setUsername] = useState("");
-  const [usernameSet, setUsernameSet] = useState(false);
+  const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
+  const [usernameSet, setUsernameSet] = useState(() => !!localStorage.getItem("username"));
   const [loading, setLoading] = useState(true);
   const messagesEndRef = useRef(null);
 
@@ -278,7 +278,7 @@ export default function App() {
                   onKeyDown={e => e.key==="Enter" && setUsernameSet(true)}
                   placeholder="Ton prénom..."
                 />
-                <button style={styles.btn()} onClick={() => setUsernameSet(true)}>
+                <button style={styles.btn()} onClick={() => { localStorage.setItem("username", username.trim() || "Anonyme"); setUsernameSet(true); }}>
                   {username.trim() ? "Confirmer" : "Anonyme"}
                 </button>
               </div>
