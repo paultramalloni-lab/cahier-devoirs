@@ -275,7 +275,7 @@ export default function App() {
               <div style={{ display:"flex", gap:8 }}>
                 <input style={{ ...styles.input, flex:1 }} value={username}
                   onChange={e => setUsername(e.target.value)}
-                  onKeyDown={e => e.key==="Enter" && setUsernameSet(true)}
+                  onKeyDown={e => e.key==="Enter" && (localStorage.setItem("username", username.trim() || "Anonyme"), setUsernameSet(true))}
                   placeholder="Ton prénom..."
                 />
                 <button style={styles.btn()} onClick={() => { localStorage.setItem("username", username.trim() || "Anonyme"); setUsernameSet(true); }}>
