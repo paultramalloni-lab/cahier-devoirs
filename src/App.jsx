@@ -16,6 +16,62 @@ const LOFI_STREAMS = [
   { name: "🌲 Nature Study", url: "https://www.youtube.com/embed/eKFTSSKCzWA?autoplay=1&controls=0" },
 ];
 
+const CONCOURS_DATE = new Date("2026-05-30T08:00:00");
+
+// ─── COUNTDOWN ───────────────────────────────────────────────────────────────
+function Countdown() {
+  const [timeLeft, setTimeLeft] = useState(null);
+
+  useEffect(() => {
+    function compute() {
+      const now = new Date();
+      const diff = CONCOURS_DATE - now;
+      if (diff <= 0) { setTimeLeft(null); return; }
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      setTimeLeft({ days, hours, minutes, seconds });
+    }
+    compute();
+    const id = setInterval(compute, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!timeLeft) return null;
+
+  const urgency = timeLeft.days < 7 ? "#dc2626" : timeLeft.days < 30 ? "#d97706" : "#7c3aed";
+  const bg = timeLeft.days < 7 ? "#fff1f2" : timeLeft.days < 30 ? "#fffbeb" : "#f5f3ff";
+  const border = timeLeft.days < 7 ? "#fecaca" : timeLeft.days < 30 ? "#fde68a" : "#ddd6fe";
+
+  return (
+    <div style={{ background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: "12px 16px", marginBottom: "1rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 20 }}>🎯</span>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: urgency, textTransform: "uppercase", letterSpacing: "0.05em" }}>Concours Blanc — 30 mai 2026</div>
+          <div style={{ fontSize: 11, color: "#6b7280", marginTop: 1 }}>Chaque minute compte. Bonne révision !</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        {[
+          { val: timeLeft.days, label: "jours" },
+          { val: timeLeft.hours, label: "heures" },
+          { val: timeLeft.minutes, label: "min" },
+          { val: timeLeft.seconds, label: "sec" },
+        ].map(({ val, label }) => (
+          <div key={label} style={{ textAlign: "center", background: "#fff", border: `1px solid ${border}`, borderRadius: 8, padding: "6px 10px", minWidth: 48 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: urgency, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+              {String(val).padStart(2, "0")}
+            </div>
+            <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Avatar({ name }) {
   const colors = ["#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899"];
   const idx = (name || "").split("").reduce((a,c) => a + c.charCodeAt(0), 0) % colors.length;
@@ -36,9 +92,9 @@ function renderFile(url, name) {
   return <a href={url} target="_blank" rel="noopener noreferrer" style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#f3f4f6", color:"#374151", borderRadius:8, fontSize:13, textDecoration:"none", marginTop:6 }}>📎 {name || "Fichier"}</a>;
 }
 
-// ─── POMODORO ───────────────────────────────────────────────────────────────
+// ─── POMODORO ────────────────────────────────────────────────────────────────
 function Pomodoro() {
-  const [phase, setPhase] = useState("work"); // work | break
+  const [phase, setPhase] = useState("work");
   const [seconds, setSeconds] = useState(25 * 60);
   const [running, setRunning] = useState(false);
   const [cycles, setCycles] = useState(0);
@@ -49,8 +105,7 @@ function Pomodoro() {
       ref.current = setInterval(() => {
         setSeconds(s => {
           if (s <= 1) {
-            clearInterval(ref.current);
-            setRunning(false);
+            clearInterval(ref.current); setRunning(false);
             if (phase === "work") { setPhase("break"); setSeconds(5*60); setCycles(c=>c+1); }
             else { setPhase("work"); setSeconds(25*60); }
             return 0;
@@ -66,253 +121,29 @@ function Pomodoro() {
   const ss = String(seconds%60).padStart(2,"0");
   const pct = phase === "work" ? 1 - seconds/(25*60) : 1 - seconds/(5*60);
 
-  const reset = () => { setRunning(false); setPhase("work"); setSeconds(25*60); };
-
   return (
     <div style={{ textAlign:"center", marginBottom:"1.5rem" }}>
       <div style={{ position:"relative", width:140, height:140, margin:"0 auto 12px" }}>
         <svg width="140" height="140" style={{ transform:"rotate(-90deg)" }}>
           <circle cx="70" cy="70" r="60" fill="none" stroke="#f3f4f6" strokeWidth="8"/>
           <circle cx="70" cy="70" r="60" fill="none"
-            stroke={phase==="work" ? "#8B5CF6" : "#10B981"} strokeWidth="8"
+            stroke={phase==="work"?"#8B5CF6":"#10B981"} strokeWidth="8"
             strokeDasharray={`${2*Math.PI*60}`}
             strokeDashoffset={`${2*Math.PI*60*(1-pct)}`}
             strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear" }}/>
         </svg>
         <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", textAlign:"center" }}>
           <div style={{ fontSize:26, fontWeight:700, color:"#111", fontVariantNumeric:"tabular-nums" }}>{mm}:{ss}</div>
-          <div style={{ fontSize:11, color: phase==="work"?"#8B5CF6":"#10B981", fontWeight:600 }}>{phase==="work"?"FOCUS":"PAUSE"}</div>
+          <div style={{ fontSize:11, color:phase==="work"?"#8B5CF6":"#10B981", fontWeight:600 }}>{phase==="work"?"FOCUS":"PAUSE"}</div>
         </div>
       </div>
       <div style={{ display:"flex", gap:8, justifyContent:"center", marginBottom:8 }}>
-        <button onClick={() => setRunning(r=>!r)} style={{ padding:"8px 20px", borderRadius:8, border:"none", background: running?"#fee2e2":"#8B5CF6", color: running?"#dc2626":"#fff", fontWeight:600, cursor:"pointer", fontSize:14 }}>
-          {running ? "⏸ Pause" : "▶ Démarrer"}
+        <button onClick={() => setRunning(r=>!r)} style={{ padding:"8px 20px", borderRadius:8, border:"none", background:running?"#fee2e2":"#8B5CF6", color:running?"#dc2626":"#fff", fontWeight:600, cursor:"pointer", fontSize:14 }}>
+          {running?"⏸ Pause":"▶ Démarrer"}
         </button>
-        <button onClick={reset} style={{ padding:"8px 14px", borderRadius:8, border:"1px solid #e5e7eb", background:"#fff", cursor:"pointer", fontSize:14 }}>↺</button>
+        <button onClick={() => { setRunning(false); setPhase("work"); setSeconds(25*60); }} style={{ padding:"8px 14px", borderRadius:8, border:"1px solid #e5e7eb", background:"#fff", cursor:"pointer", fontSize:14 }}>↺</button>
       </div>
-      <div style={{ fontSize:12, color:"#9ca3af" }}>🍅 {cycles} cycles complétés · 25min travail / 5min pause</div>
-    </div>
-  );
-}
-
-// ─── PLANNING IA ─────────────────────────────────────────────────────────────
-function PlanningTab({ homework, username }) {
-  const [availTime, setAvailTime] = useState("");
-  const [selectedSubjects, setSelectedSubjects] = useState([]);
-  const [plan, setPlan] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  const pendingBySubject = SUBJECTS.map(s => ({
-    ...s,
-    items: homework.filter(h => h.subject_id === s.id && !h.done),
-  })).filter(s => s.items.length > 0);
-
-  function toggleSubject(id) {
-    setSelectedSubjects(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
-  }
-
-  function generatePlan() {
-    if (!availTime || isNaN(parseFloat(availTime))) return;
-    setLoading(true);
-    const totalMin = Math.round(parseFloat(availTime) * 60);
-    const toRevise = (selectedSubjects.length > 0
-      ? pendingBySubject.filter(s => selectedSubjects.includes(s.id))
-      : pendingBySubject);
-
-    if (toRevise.length === 0) { setPlan([]); setLoading(false); return; }
-
-    // Algorithme de répartition
-    const slots = [];
-    const baseTime = Math.floor(totalMin / toRevise.length);
-    let remaining = totalMin;
-    let cursor = new Date();
-    cursor.setSeconds(0,0);
-
-    toRevise.forEach((sub, i) => {
-      const alloc = i === toRevise.length - 1 ? remaining : baseTime;
-      remaining -= alloc;
-      const startStr = cursor.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
-      cursor = new Date(cursor.getTime() + alloc * 60000);
-      const endStr = cursor.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" });
-
-      // 5min break between sessions (except last)
-      if (i < toRevise.length - 1) cursor = new Date(cursor.getTime() + 5 * 60000);
-
-      slots.push({ sub, alloc, startStr, endStr, items: sub.items });
-    });
-
-    setTimeout(() => { setPlan(slots); setLoading(false); }, 600);
-  }
-
-  return (
-    <div>
-      <div style={{ background:"linear-gradient(135deg,#667eea22,#764ba222)", border:"1px solid #c4b5fd", borderRadius:12, padding:"1rem", marginBottom:"1.5rem" }}>
-        <h3 style={{ margin:"0 0 4px", fontSize:15, fontWeight:600, color:"#5b21b6" }}>📅 Générateur de Planning de Révisions</h3>
-        <p style={{ margin:"0 0 12px", fontSize:12, color:"#6d28d9" }}>Entre ton temps disponible et le site génère un planning adapté à tes devoirs réels.</p>
-
-        <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:12 }}>
-          <input type="number" min="0.5" max="12" step="0.5" value={availTime}
-            onChange={e => setAvailTime(e.target.value)}
-            placeholder="Ex: 2 (heures)"
-            style={{ width:120, padding:"8px 12px", border:"1px solid #c4b5fd", borderRadius:8, fontSize:14, outline:"none" }} />
-          <span style={{ fontSize:13, color:"#6b7280" }}>heure(s) disponible(s)</span>
-        </div>
-
-        <div style={{ fontSize:12, color:"#6b7280", marginBottom:8 }}>Matières à réviser (laisser vide = toutes) :</div>
-        <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
-          {pendingBySubject.map(s => (
-            <button key={s.id} onClick={() => toggleSubject(s.id)} style={{
-              padding:"4px 12px", borderRadius:20, border:`2px solid ${s.color}`,
-              background: selectedSubjects.includes(s.id) ? s.color : "#fff",
-              color: selectedSubjects.includes(s.id) ? "#fff" : s.color,
-              fontSize:12, cursor:"pointer", fontWeight:600,
-            }}>{s.icon} {s.name} ({s.items.length})</button>
-          ))}
-          {pendingBySubject.length === 0 && <span style={{ fontSize:12, color:"#9ca3af" }}>🎉 Aucun devoir en attente !</span>}
-        </div>
-
-        <button onClick={generatePlan} disabled={!availTime || loading}
-          style={{ padding:"8px 20px", borderRadius:8, border:"none", background: availTime?"#7c3aed":"#d1d5db", color:"#fff", fontWeight:600, cursor: availTime?"pointer":"not-allowed", fontSize:14 }}>
-          {loading ? "⏳ Génération..." : "✨ Générer mon planning"}
-        </button>
-      </div>
-
-      {plan && plan.length === 0 && (
-        <div style={{ textAlign:"center", color:"#9ca3af", fontSize:14, padding:"2rem 0" }}>🎉 Aucun devoir en attente pour les matières sélectionnées !</div>
-      )}
-
-      {plan && plan.length > 0 && (
-        <div>
-          <div style={{ fontSize:13, fontWeight:600, color:"#111", marginBottom:12 }}>
-            🗓️ Ton planning pour {availTime}h — {plan.reduce((a,p)=>a+p.alloc,0)} min de travail + {(plan.length-1)*5} min de pauses
-          </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {plan.map((slot, i) => (
-              <div key={i}>
-                <div style={{ background:"#fff", border:`2px solid ${slot.sub.color}22`, borderLeft:`4px solid ${slot.sub.color}`, borderRadius:10, padding:"12px 14px" }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                      <span style={{ fontSize:20 }}>{slot.sub.icon}</span>
-                      <div>
-                        <div style={{ fontSize:14, fontWeight:600, color:"#111" }}>{slot.sub.name}</div>
-                        <div style={{ fontSize:11, color:slot.sub.color }}>{slot.alloc} minutes</div>
-                      </div>
-                    </div>
-                    <div style={{ textAlign:"right" }}>
-                      <div style={{ fontSize:13, fontWeight:600, color:"#111" }}>{slot.startStr} → {slot.endStr}</div>
-                    </div>
-                  </div>
-                  <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                    {slot.items.map((hw, j) => (
-                      <div key={j} style={{ display:"flex", alignItems:"center", gap:6, fontSize:13, color:"#374151" }}>
-                        <span style={{ color:slot.sub.color }}>•</span> {hw.text}
-                        {hw.date && <span style={{ fontSize:11, color:"#9ca3af" }}>(pour le {new Date(hw.date+"T12:00:00").toLocaleDateString("fr-FR")})</span>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                {i < plan.length - 1 && (
-                  <div style={{ textAlign:"center", fontSize:11, color:"#9ca3af", padding:"4px 0" }}>☕ 5 min de pause</div>
-                )}
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop:"1rem", background:"#f0fdf4", border:"1px solid #bbf7d0", borderRadius:10, padding:"10px 14px", fontSize:12, color:"#166534" }}>
-            💡 Conseil : commence par la matière qui te demande le plus d'effort quand tu es encore frais !
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── MENTORAT ─────────────────────────────────────────────────────────────────
-function MentoratBadge({ subjectId, username }) {
-  const [mentors, setMentors] = useState([]);
-  const [myStatus, setMyStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => { load(); }, [subjectId]);
-
-  async function load() {
-    setLoading(true);
-    const { data } = await supabase.from("mentors").select("*").eq("subject_id", subjectId);
-    if (data) {
-      setMentors(data);
-      if (username) setMyStatus(data.find(m => m.username === username)?.status || null);
-    }
-    setLoading(false);
-  }
-
-  async function setStatus(status) {
-    const name = username || "Anonyme";
-    const existing = mentors.find(m => m.username === name);
-    if (existing) {
-      if (existing.status === status) {
-        await supabase.from("mentors").delete().eq("id", existing.id);
-        setMyStatus(null);
-      } else {
-        await supabase.from("mentors").update({ status }).eq("id", existing.id);
-        setMyStatus(status);
-      }
-    } else {
-      await supabase.from("mentors").insert({ subject_id: subjectId, username: name, status });
-      setMyStatus(status);
-    }
-    load();
-  }
-
-  const helpers = mentors.filter(m => m.status === "gere");
-  const needers = mentors.filter(m => m.status === "aide");
-
-  return (
-    <div style={{ background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:10, padding:"10px 12px", marginTop:"1rem" }}>
-      <div style={{ fontSize:12, fontWeight:600, color:"#374151", marginBottom:8 }}>🤝 Système d'entraide</div>
-      <div style={{ display:"flex", gap:8, marginBottom:10, flexWrap:"wrap" }}>
-        <button onClick={() => setStatus("gere")} style={{
-          padding:"5px 12px", borderRadius:8, fontSize:12, cursor:"pointer", fontWeight:600,
-          border: myStatus==="gere" ? "2px solid #10B981" : "1px solid #d1d5db",
-          background: myStatus==="gere" ? "#d1fae5" : "#fff",
-          color: myStatus==="gere" ? "#065f46" : "#374151",
-        }}>✅ Je gère cette leçon</button>
-        <button onClick={() => setStatus("aide")} style={{
-          padding:"5px 12px", borderRadius:8, fontSize:12, cursor:"pointer", fontWeight:600,
-          border: myStatus==="aide" ? "2px solid #F59E0B" : "1px solid #d1d5db",
-          background: myStatus==="aide" ? "#fef3c7" : "#fff",
-          color: myStatus==="aide" ? "#92400e" : "#374151",
-        }}>🆘 J'ai besoin d'aide</button>
-      </div>
-      {!loading && (
-        <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
-          {helpers.length > 0 && (
-            <div>
-              <div style={{ fontSize:11, color:"#059669", fontWeight:600, marginBottom:4 }}>✅ Peuvent aider :</div>
-              <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-                {helpers.map(m => (
-                  <span key={m.id} style={{ fontSize:11, background:"#d1fae5", color:"#065f46", padding:"2px 8px", borderRadius:20, display:"flex", alignItems:"center", gap:4 }}>
-                    ⭐ {m.username}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {needers.length > 0 && (
-            <div>
-              <div style={{ fontSize:11, color:"#d97706", fontWeight:600, marginBottom:4 }}>🆘 Cherchent de l'aide :</div>
-              <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-                {needers.map(m => (
-                  <span key={m.id} style={{ fontSize:11, background:"#fef3c7", color:"#92400e", padding:"2px 8px", borderRadius:20 }}>
-                    {m.username}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {helpers.length === 0 && needers.length === 0 && (
-            <span style={{ fontSize:11, color:"#9ca3af" }}>Personne n'a encore indiqué son statut.</span>
-          )}
-        </div>
-      )}
+      <div style={{ fontSize:12, color:"#9ca3af" }}>🍅 {cycles} cycles · 25min travail / 5min pause</div>
     </div>
   );
 }
@@ -325,7 +156,6 @@ function FocusMode({ homework, onExit }) {
 
   return (
     <div style={{ position:"fixed", inset:0, background:"#0f0f1a", zIndex:1000, display:"flex", flexDirection:"column", padding:"1.5rem", overflowY:"auto" }}>
-      {/* Header */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1.5rem" }}>
         <div>
           <h2 style={{ margin:0, fontSize:18, fontWeight:700, color:"#e2e8f0" }}>🎯 Mode Focus</h2>
@@ -333,15 +163,11 @@ function FocusMode({ homework, onExit }) {
         </div>
         <button onClick={onExit} style={{ padding:"8px 16px", borderRadius:8, border:"1px solid #334155", background:"transparent", color:"#94a3b8", cursor:"pointer", fontSize:13 }}>✕ Quitter</button>
       </div>
-
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1.5rem", maxWidth:900, margin:"0 auto", width:"100%" }}>
-        {/* Colonne gauche : devoirs + lofi */}
         <div>
           <div style={{ background:"#1e1e2e", borderRadius:14, padding:"1rem", marginBottom:"1rem" }}>
             <div style={{ fontSize:13, fontWeight:600, color:"#a78bfa", marginBottom:12 }}>📋 Devoirs à faire ({pending.length})</div>
-            {pending.length === 0 ? (
-              <div style={{ color:"#64748b", fontSize:13 }}>🎉 Tout est fait !</div>
-            ) : (
+            {pending.length === 0 ? <div style={{ color:"#64748b", fontSize:13 }}>🎉 Tout est fait !</div> : (
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                 {pending.map(hw => {
                   const sub = SUBJECTS.find(s => s.id === hw.subject_id);
@@ -358,33 +184,17 @@ function FocusMode({ homework, onExit }) {
               </div>
             )}
           </div>
-
-          {/* Lo-Fi */}
           <div style={{ background:"#1e1e2e", borderRadius:14, padding:"1rem" }}>
             <div style={{ fontSize:13, fontWeight:600, color:"#a78bfa", marginBottom:10 }}>🎧 Musique Lo-Fi</div>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 }}>
               {LOFI_STREAMS.map((l, i) => (
-                <button key={i} onClick={() => { setLofiIdx(i); setLofiOn(true); }} style={{
-                  padding:"5px 10px", borderRadius:8, border:`1px solid ${lofiIdx===i&&lofiOn?"#7c3aed":"#334155"}`,
-                  background: lofiIdx===i&&lofiOn?"#4c1d95":"transparent",
-                  color: lofiIdx===i&&lofiOn?"#e2e8f0":"#94a3b8", fontSize:12, cursor:"pointer",
-                }}>{l.name}</button>
+                <button key={i} onClick={() => { setLofiIdx(i); setLofiOn(true); }} style={{ padding:"5px 10px", borderRadius:8, border:`1px solid ${lofiIdx===i&&lofiOn?"#7c3aed":"#334155"}`, background:lofiIdx===i&&lofiOn?"#4c1d95":"transparent", color:lofiIdx===i&&lofiOn?"#e2e8f0":"#94a3b8", fontSize:12, cursor:"pointer" }}>{l.name}</button>
               ))}
               <button onClick={() => setLofiOn(false)} style={{ padding:"5px 10px", borderRadius:8, border:"1px solid #334155", background:"transparent", color:"#ef4444", fontSize:12, cursor:"pointer" }}>⏹ Stop</button>
             </div>
-            {lofiOn && (
-              <iframe
-                src={LOFI_STREAMS[lofiIdx].url}
-                style={{ width:"100%", height:80, border:"none", borderRadius:8, display:"block" }}
-                allow="autoplay"
-                title="lofi"
-              />
-            )}
-            {!lofiOn && <div style={{ fontSize:12, color:"#475569", textAlign:"center", padding:"12px 0" }}>Clique sur un style pour lancer la musique 🎵</div>}
+            {lofiOn ? <iframe src={LOFI_STREAMS[lofiIdx].url} style={{ width:"100%", height:80, border:"none", borderRadius:8, display:"block" }} allow="autoplay" title="lofi"/> : <div style={{ fontSize:12, color:"#475569", textAlign:"center", padding:"12px 0" }}>Clique sur un style 🎵</div>}
           </div>
         </div>
-
-        {/* Colonne droite : Pomodoro */}
         <div style={{ background:"#1e1e2e", borderRadius:14, padding:"1.5rem" }}>
           <div style={{ fontSize:13, fontWeight:600, color:"#a78bfa", marginBottom:"1rem" }}>🍅 Timer Pomodoro</div>
           <Pomodoro />
@@ -392,10 +202,73 @@ function FocusMode({ homework, onExit }) {
             <strong style={{ color:"#e2e8f0" }}>Méthode Pomodoro :</strong><br/>
             ▶ 25 min de travail intense<br/>
             ☕ 5 min de pause<br/>
-            🔄 Répète 4x puis fais une grande pause
+            🔄 Répète 4x puis grande pause
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── MENTORAT ─────────────────────────────────────────────────────────────────
+function MentoratBadge({ subjectId, username }) {
+  const [mentors, setMentors] = useState([]);
+  const [myStatus, setMyStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => { load(); }, [subjectId]);
+
+  async function load() {
+    setLoading(true);
+    const { data } = await supabase.from("mentors").select("*").eq("subject_id", subjectId);
+    if (data) { setMentors(data); if (username) setMyStatus(data.find(m => m.username === username)?.status || null); }
+    setLoading(false);
+  }
+
+  async function setStatus(status) {
+    const name = username || "Anonyme";
+    const existing = mentors.find(m => m.username === name);
+    if (existing) {
+      if (existing.status === status) { await supabase.from("mentors").delete().eq("id", existing.id); setMyStatus(null); }
+      else { await supabase.from("mentors").update({ status }).eq("id", existing.id); setMyStatus(status); }
+    } else {
+      await supabase.from("mentors").insert({ subject_id: subjectId, username: name, status });
+      setMyStatus(status);
+    }
+    load();
+  }
+
+  const helpers = mentors.filter(m => m.status === "gere");
+  const needers = mentors.filter(m => m.status === "aide");
+
+  return (
+    <div style={{ background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:10, padding:"10px 12px", marginTop:"1rem" }}>
+      <div style={{ fontSize:12, fontWeight:600, color:"#374151", marginBottom:8 }}>🤝 Système d'entraide</div>
+      <div style={{ display:"flex", gap:8, marginBottom:10, flexWrap:"wrap" }}>
+        <button onClick={() => setStatus("gere")} style={{ padding:"5px 12px", borderRadius:8, fontSize:12, cursor:"pointer", fontWeight:600, border:myStatus==="gere"?"2px solid #10B981":"1px solid #d1d5db", background:myStatus==="gere"?"#d1fae5":"#fff", color:myStatus==="gere"?"#065f46":"#374151" }}>✅ Je gère cette leçon</button>
+        <button onClick={() => setStatus("aide")} style={{ padding:"5px 12px", borderRadius:8, fontSize:12, cursor:"pointer", fontWeight:600, border:myStatus==="aide"?"2px solid #F59E0B":"1px solid #d1d5db", background:myStatus==="aide"?"#fef3c7":"#fff", color:myStatus==="aide"?"#92400e":"#374151" }}>🆘 J'ai besoin d'aide</button>
+      </div>
+      {!loading && (
+        <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
+          {helpers.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, color:"#059669", fontWeight:600, marginBottom:4 }}>✅ Peuvent aider :</div>
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                {helpers.map(m => <span key={m.id} style={{ fontSize:11, background:"#d1fae5", color:"#065f46", padding:"2px 8px", borderRadius:20 }}>⭐ {m.username}</span>)}
+              </div>
+            </div>
+          )}
+          {needers.length > 0 && (
+            <div>
+              <div style={{ fontSize:11, color:"#d97706", fontWeight:600, marginBottom:4 }}>🆘 Cherchent de l'aide :</div>
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                {needers.map(m => <span key={m.id} style={{ fontSize:11, background:"#fef3c7", color:"#92400e", padding:"2px 8px", borderRadius:20 }}>{m.username}</span>)}
+              </div>
+            </div>
+          )}
+          {helpers.length === 0 && needers.length === 0 && <span style={{ fontSize:11, color:"#9ca3af" }}>Personne n'a encore indiqué son statut.</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -513,7 +386,7 @@ export default function App() {
 
   const st={
     container:{fontFamily:"system-ui, sans-serif",padding:"1rem",maxWidth:760,margin:"0 auto"},
-    tabs:{display:"flex",gap:8,margin:"1.25rem 0",borderBottom:"1px solid #e5e7eb",paddingBottom:"0.75rem",flexWrap:"wrap"},
+    tabs:{display:"flex",gap:8,margin:"1rem 0",borderBottom:"1px solid #e5e7eb",paddingBottom:"0.75rem",flexWrap:"wrap"},
     tab:(active)=>({padding:"6px 14px",border:"1px solid "+(active?"#d1d5db":"#e5e7eb"),borderRadius:8,background:active?"#fff":"transparent",fontSize:13,fontWeight:active?500:400,color:active?"#111":"#888",cursor:"pointer"}),
     grid:{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(160px,1fr))",gap:12},
     card:(color,has)=>({background:"#fff",border:has?`2px solid ${color}`:"1px solid #e5e7eb",borderRadius:12,padding:"1rem",cursor:"pointer",transition:"box-shadow 0.15s"}),
@@ -572,19 +445,22 @@ export default function App() {
 
   return (
     <div style={st.container}>
+      {/* Header */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1rem"}}>
         <div>
           <h1 style={{margin:"0 0 4px",fontSize:20,fontWeight:600}}>📚 Mon Cahier de Devoirs</h1>
           <p style={{margin:0,fontSize:13,color:"#888"}}>{totalPending>0?`${totalPending} devoir${totalPending>1?"s":""} en attente`:"Tout est à jour ✓"}</p>
         </div>
-        <button onClick={()=>setFocusMode(true)} style={{padding:"8px 16px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#667eea,#764ba2)",color:"#fff",fontWeight:600,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
-          🎯 Mode Focus
+        <button onClick={()=>setFocusMode(true)} style={{padding:"8px 16px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#667eea,#764ba2)",color:"#fff",fontWeight:600,cursor:"pointer",fontSize:13}}>
+          🎯 Focus
         </button>
       </div>
 
+      {/* ── COUNTDOWN ── */}
+      <Countdown />
+
       <div style={st.tabs}>
         <button style={st.tab(tab==="devoirs")} onClick={()=>{setTab("devoirs");setSelectedSubject(null);}}>Devoirs {totalPending>0&&`· ${totalPending}`}</button>
-        <button style={st.tab(tab==="planning")} onClick={()=>setTab("planning")}>📅 Planning IA</button>
         <button style={st.tab(tab==="partage")} onClick={()=>{setTab("partage");setSelectedThread(null);}}>💬 Espace partagé</button>
         <button style={st.tab(tab==="forums")} onClick={()=>{setTab("forums");setSelectedThread(null);setThreadSubject(null);}}>🗂️ Forums</button>
       </div>
@@ -648,9 +524,6 @@ export default function App() {
           <MentoratBadge subjectId={subject.id} username={username||"Anonyme"}/>
         </div>
       )}
-
-      {/* ── PLANNING IA ── */}
-      {tab==="planning"&&<PlanningTab homework={homework} username={username}/>}
 
       {/* ── ESPACE PARTAGE ── */}
       {tab==="partage"&&(
