@@ -37,7 +37,9 @@ export default function App() {
   const [username, setUsername] = useState(() => localStorage.getItem("username") || "");
   const [usernameSet, setUsernameSet] = useState(() => !!localStorage.getItem("username"));
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => { loadAll(); }, []);
 
@@ -99,16 +101,47 @@ export default function App() {
     setHomework(prev => prev.filter(h => h.id !== id));
   }
 
-  async function sendMessage() {
-    if (!newMsg.trim()) return;
+  async function sendMessage(fileUrl = null, fileName = null) {
+    const text = newMsg.trim();
+    if (!text && !fileUrl) return;
     const now = new Date();
     const time = now.toLocaleString("fr-FR", { hour:"2-digit", minute:"2-digit", day:"2-digit", month:"2-digit" });
     await supabase.from("messages").insert({
       username: username.trim() || "Anonyme",
-      text: newMsg.trim(),
+      text: text || "",
       time,
+      file_url: fileUrl || null,
+      file_name: fileName || null,
     });
     setNewMsg("");
+  }
+
+  async function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    const ext = file.name.split(".").pop();
+    const fileName = `${Date.now()}.${ext}`;
+    const { data, error } = await supabase.storage
+      .from("corrections")
+      .upload(fileName, file, { cacheControl:"3600", upsert:false });
+    if (error) {
+      alert("Erreur upload : " + error.message);
+      setUploading(false);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from("corrections").getPublicUrl(fileName);
+    await sendMessage(urlData.publicUrl, file.name);
+    setUploading(false);
+    e.target.value = "";
+  }
+
+  function isImage(url) {
+    return url && /\.(jpg|jpeg|png|gif|webp)$/i.test(url);
+  }
+
+  function isPdf(url) {
+    return url && /\.pdf$/i.test(url);
   }
 
   const hwForSubject = id => homework.filter(h => h.subject_id === id);
@@ -157,7 +190,10 @@ export default function App() {
     chatBox: { background:"#fff", border:"1px solid #e5e7eb", borderRadius:12, padding:"1rem", minHeight:280, maxHeight:400, overflowY:"auto", marginBottom:12, display:"flex", flexDirection:"column", gap:14 },
     bubble: { background:"#f3f4f6", borderRadius:"0 8px 8px 8px", padding:"8px 12px", fontSize:14, color:"#111", display:"inline-block", maxWidth:"90%", lineHeight:1.5, whiteSpace:"pre-wrap", wordBreak:"break-word" },
     userBox: { background:"#f9fafb", border:"1px solid #e5e7eb", borderRadius:12, padding:"1rem", marginBottom:"1.25rem" },
-    infoBanner: { marginTop:"1rem", background:"#eff6ff", border:"1px solid #bfdbfe", borderRadius:8, padding:"10px 14px", fontSize:12, color:"#1d4ed8", lineHeight:1.6 },
+    uploadBtn: {
+      padding:"8px 12px", border:"1px solid #d1d5db", borderRadius:8,
+      background:"#fff", fontSize:14, cursor:"pointer", color:"#6b7280",
+    },
   };
 
   if (loading) return (
@@ -221,7 +257,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Formulaire ajout */}
           <div style={styles.formBox}>
             <div style={{ fontSize:12, color:"#6b7280", marginBottom:4 }}>Ajouter un devoir (visible par toute la classe)</div>
             <div style={styles.row}>
@@ -237,7 +272,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Liste devoirs */}
           {hwForSubject(subject.id).length === 0 ? (
             <div style={{ textAlign:"center", color:"#9ca3af", fontSize:14, padding:"2rem 0" }}>Aucun devoir pour cette matière 🎉</div>
           ) : (
@@ -299,34 +333,59 @@ export default function App() {
                     <span style={{ fontSize:13, fontWeight:600, color:"#111" }}>{msg.username}</span>
                     <span style={{ fontSize:11, color:"#9ca3af" }}>{msg.time}</span>
                   </div>
-                  <div style={styles.bubble}>{msg.text}</div>
+                  {msg.text && <div style={styles.bubble}>{msg.text}</div>}
+                  {msg.file_url && isImage(msg.file_url) && (
+                    <div style={{ marginTop:6 }}>
+                      <img src={msg.file_url} alt={msg.file_name} style={{ maxWidth:260, maxHeight:200, borderRadius:8, border:"1px solid #e5e7eb", cursor:"pointer" }}
+                        onClick={() => window.open(msg.file_url, "_blank")} />
+                    </div>
+                  )}
+                  {msg.file_url && isPdf(msg.file_url) && (
+                    <div style={{ marginTop:6 }}>
+                      <a href={msg.file_url} target="_blank" rel="noopener noreferrer"
+                        style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#fee2e2", color:"#dc2626", borderRadius:8, fontSize:13, textDecoration:"none" }}>
+                        📄 {msg.file_name || "Fichier PDF"}
+                      </a>
+                    </div>
+                  )}
+                  {msg.file_url && !isImage(msg.file_url) && !isPdf(msg.file_url) && (
+                    <div style={{ marginTop:6 }}>
+                      <a href={msg.file_url} target="_blank" rel="noopener noreferrer"
+                        style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#f3f4f6", color:"#374151", borderRadius:8, fontSize:13, textDecoration:"none" }}>
+                        📎 {msg.file_name || "Fichier"}
+                      </a>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
             <div ref={messagesEndRef}/>
           </div>
 
-          {/* Envoyer message */}
+          {/* Envoyer message + fichier */}
           <div style={{ display:"flex", gap:8 }}>
             <input style={{ ...styles.input, flex:1 }} value={newMsg}
               onChange={e => setNewMsg(e.target.value)}
               onKeyDown={e => e.key==="Enter" && !e.shiftKey && sendMessage()}
               placeholder={usernameSet ? `Écris un message en tant que ${username||"Anonyme"}…` : "Écris ton message…"}
             />
-            <button style={styles.btn("#3B82F6")} onClick={sendMessage}>Envoyer</button>
+            <button style={styles.btn("#3B82F6")} onClick={() => sendMessage()}>Envoyer</button>
+            <button style={styles.uploadBtn} onClick={() => fileInputRef.current.click()} disabled={uploading}>
+              {uploading ? "⏳" : "📎"}
+            </button>
+            <input type="file" ref={fileInputRef} style={{ display:"none" }}
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+              onChange={handleFileUpload}
+            />
           </div>
           <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
             <div style={{ fontSize:11, color:"#9ca3af" }}>
-              {usernameSet ? `Connecté en tant que ${username||"Anonyme"} · Messages partagés en temps réel` : "Messages visibles par tous"}
+              {usernameSet ? `Connecté en tant que ${username||"Anonyme"} · 📎 pour envoyer une photo ou un fichier` : "Messages visibles par tous · 📎 pour envoyer des fichiers"}
             </div>
             {usernameSet && (
               <button style={{ fontSize:11, padding:"3px 8px", border:"1px solid #e5e7eb", borderRadius:6, cursor:"pointer", background:"#fff" }}
                 onClick={() => setUsernameSet(false)}>Changer de nom</button>
             )}
-          </div>
-
-          <div style={styles.infoBanner}>
-            <strong>Partager des fichiers :</strong> Colle directement un lien Google Drive, WeTransfer ou Dropbox dans le chat pour partager des corrections ou des exercices.
           </div>
         </div>
       )}
