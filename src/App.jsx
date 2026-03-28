@@ -18,93 +18,446 @@ const LOFI_STREAMS = [
 
 const CONCOURS_DATE = new Date("2026-05-30T08:00:00");
 
-// ─── DARK MODE HOOK ──────────────────────────────────────────────────────────
+const AVATAR_COLORS = ["#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899","#06B6D4","#F97316"];
+function avatarColor(name) {
+  return AVATAR_COLORS[(name||"").split("").reduce((a,c)=>a+c.charCodeAt(0),0) % AVATAR_COLORS.length];
+}
+
+// ─── DARK MODE ────────────────────────────────────────────────────────────────
 function useDarkMode() {
   function shouldBeDark() {
     const h = new Date().getHours();
-    const nightTime = h >= 20 || h < 7;
-    const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    return nightTime || systemDark;
+    return (h >= 20 || h < 7) || window.matchMedia("(prefers-color-scheme: dark)").matches;
   }
   const [dark, setDark] = useState(() => {
-    const saved = localStorage.getItem("darkMode");
-    if (saved !== null) return saved === "true";
-    return shouldBeDark();
+    const s = localStorage.getItem("darkMode");
+    return s !== null ? s === "true" : shouldBeDark();
   });
   useEffect(() => {
-    const id = setInterval(() => {
-      const saved = localStorage.getItem("darkMode");
-      if (saved === null) setDark(shouldBeDark());
-    }, 60000);
+    const id = setInterval(() => { if(!localStorage.getItem("darkMode")) setDark(shouldBeDark()); }, 60000);
     return () => clearInterval(id);
   }, []);
-  const toggle = useCallback(() => {
-    setDark(d => { localStorage.setItem("darkMode", String(!d)); return !d; });
-  }, []);
+  const toggle = useCallback(() => setDark(d => { localStorage.setItem("darkMode", String(!d)); return !d; }), []);
   return [dark, toggle];
 }
 
-// ─── CSS VARIABLES + ANIMATIONS ──────────────────────────────────────────────
-function ThemeStyle({ dark }) {
-  const vars = dark ? `
-    :root{--bg:#0f0f1a;--bg2:#1a1a2e;--bg3:#16213e;--card:#1e1e30;--border:#2a2a45;--border2:#3a3a5a;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--input-bg:#1a1a2e;--btn-bg:#1e1e30;}
-    body{background:#0f0f1a!important;}
-  ` : `
-    :root{--bg:#f8fafc;--bg2:#ffffff;--bg3:#f1f5f9;--card:#ffffff;--border:#e2e8f0;--border2:#cbd5e1;--text:#0f172a;--text2:#64748b;--text3:#94a3b8;--input-bg:#ffffff;--btn-bg:#ffffff;}
-    body{background:#f8fafc!important;}
-  `;
-  const anim = `
-    @keyframes fadeInDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes slideIn{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
-    @keyframes fadeOutRight{from{opacity:1;transform:translateX(0) scale(1)}to{opacity:0;transform:translateX(40px) scale(0.95)}}
-    @keyframes checkPop{0%{transform:scale(1)}50%{transform:scale(1.25)}100%{transform:scale(1)}}
-    @keyframes pulseBeat{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
-    *{transition:background-color 0.3s ease,border-color 0.3s ease,color 0.2s ease;}
-    input,select,textarea{background:var(--input-bg)!important;color:var(--text)!important;border-color:var(--border)!important;transition:background-color 0.3s,border-color 0.3s,box-shadow 0.2s!important;}
-    input:focus,select:focus,textarea:focus{outline:none!important;box-shadow:0 0 0 3px rgba(99,102,241,0.3)!important;border-color:#6366f1!important;}
-    button{transition:opacity 0.15s,transform 0.1s!important;}
-    button:hover{opacity:0.82;}
-    button:active{transform:scale(0.97);}
-    .hw-item{animation:slideIn 0.3s ease;}
-    .hw-item.checking{animation:fadeOutRight 0.38s ease forwards;}
-    .card-hover{transition:transform 0.2s ease,box-shadow 0.2s ease!important;}
-    .card-hover:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(0,0,0,0.13)!important;}
-    .fade-in{animation:fadeInDown 0.35s ease;}
-    ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-track{background:var(--bg3);} ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
-  `;
-  return <style>{vars + anim}</style>;
+// ─── GHOST TYPING HOOK ────────────────────────────────────────────────────────
+function useTypingPresence(channelName, myUser) {
+  const [typingUsers, setTypingUsers] = useState([]);
+  const [onlineUsers, setOnlineUsers]  = useState([]);
+  const chRef  = useRef(null);
+  const tmRef  = useRef(null);
+
+  useEffect(() => {
+    if (!channelName) return;
+    const key = (myUser || "anon") + "-" + Math.random().toString(36).slice(2, 6);
+    chRef.current = supabase.channel(channelName, { config: { presence: { key } } });
+
+    chRef.current.on("presence", { event: "sync" }, () => {
+      const state = chRef.current.presenceState();
+      const all   = Object.values(state).flat();
+      setOnlineUsers([...new Set(all.map(u => u.user).filter(Boolean))]);
+      setTypingUsers(all.filter(u => u.typing && u.user !== (myUser || "Anonyme")).map(u => u.user));
+    });
+
+    chRef.current.subscribe(async status => {
+      if (status === "SUBSCRIBED") {
+        await chRef.current.track({ user: myUser || "Anonyme", typing: false });
+      }
+    });
+
+    return () => { supabase.removeChannel(chRef.current); };
+  }, [channelName, myUser]);
+
+  const setTyping = useCallback(async (isTyping) => {
+    clearTimeout(tmRef.current);
+    await chRef.current?.track({ user: myUser || "Anonyme", typing: isTyping });
+    if (isTyping) {
+      tmRef.current = setTimeout(() => {
+        chRef.current?.track({ user: myUser || "Anonyme", typing: false });
+      }, 3000);
+    }
+  }, [myUser]);
+
+  return [typingUsers, onlineUsers, setTyping];
 }
 
-// ─── COUNTDOWN ───────────────────────────────────────────────────────────────
+// ─── THEME STYLE ─────────────────────────────────────────────────────────────
+function ThemeStyle({ dark }) {
+  const v = dark ? `
+    :root{--bg:#0d0d14;--bg2:#13131f;--bg3:#1a1a2e;--card:#1e1e30;--border:#252538;--border2:#35354f;--text:#e2e8f0;--text2:#8892a4;--text3:#4a5568;--ibg:#1a1a2e;--bbg:#1e1e30;--accent:#6366f1;}
+    body{background:#0d0d14!important;}
+  ` : `
+    :root{--bg:#f0f2f5;--bg2:#ffffff;--bg3:#f7f8fa;--card:#ffffff;--border:#e4e6eb;--border2:#cdd1d5;--text:#050505;--text2:#65676b;--text3:#8a8d91;--ibg:#f0f2f5;--bbg:#ffffff;--accent:#1877f2;}
+    body{background:#f0f2f5!important;}
+  `;
+  const a = `
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes slideIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:translateX(0)}}
+    @keyframes msgIn{from{opacity:0;transform:translateY(6px) scale(0.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+    @keyframes fadeOutR{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(30px)}}
+    @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+    @keyframes blink{0%,80%,100%{opacity:0}40%{opacity:1}}
+    @keyframes typingDot{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+    *{transition:background-color 0.25s,border-color 0.25s,color 0.2s;}
+    input,select,textarea{background:var(--ibg)!important;color:var(--text)!important;border-color:var(--border)!important;}
+    input:focus,select:focus,textarea:focus{outline:none!important;box-shadow:0 0 0 2px var(--accent)44!important;border-color:var(--accent)!important;}
+    button{transition:opacity 0.12s,transform 0.1s,box-shadow 0.15s!important;}
+    button:hover{opacity:0.85;}button:active{transform:scale(0.96);}
+    .fade-up{animation:fadeUp 0.3s ease;}
+    .hw-item{animation:slideIn 0.25s ease;}
+    .hw-item.removing{animation:fadeOutR 0.35s ease forwards;}
+    .msg-bubble{animation:msgIn 0.2s ease;}
+    .card-lift{transition:transform 0.18s,box-shadow 0.18s!important;}
+    .card-lift:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.1)!important;}
+    ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+  `;
+  return <style>{v + a}</style>;
+}
+
+// ─── AVATAR ───────────────────────────────────────────────────────────────────
+function Avatar({ name, size = 36, online = false }) {
+  const c = avatarColor(name);
+  return (
+    <div style={{ position:"relative", flexShrink:0 }}>
+      <div style={{ width:size, height:size, borderRadius:"50%", background:c+"25", color:c, border:`2px solid ${c}55`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.38, fontWeight:700, letterSpacing:"-0.5px" }}>
+        {(name||"?")[0].toUpperCase()}
+      </div>
+      {online && <div style={{ position:"absolute", bottom:1, right:1, width:10, height:10, borderRadius:"50%", background:"#22c55e", border:"2px solid var(--card)" }}/>}
+    </div>
+  );
+}
+
+// ─── TYPING INDICATOR ────────────────────────────────────────────────────────
+function TypingIndicator({ users }) {
+  if (!users.length) return null;
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 12px", fontSize:12, color:"var(--text2)" }}>
+      <div style={{ display:"flex", gap:3, alignItems:"center" }}>
+        {[0,1,2].map(i => (
+          <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:"var(--text3)", animation:`typingDot 1.2s ease ${i*0.2}s infinite` }}/>
+        ))}
+      </div>
+      <span><strong>{users.slice(0,2).join(", ")}</strong>{users.length > 2 ? ` +${users.length-2}` : ""} {users.length === 1 ? "écrit..." : "écrivent..."}</span>
+    </div>
+  );
+}
+
+// ─── FILES ────────────────────────────────────────────────────────────────────
+const isImage = u => u && /\.(jpg|jpeg|png|gif|webp)$/i.test(u);
+const isPdf   = u => u && /\.pdf$/i.test(u);
+function FileAttachment({ url, name }) {
+  if (!url) return null;
+  if (isImage(url)) return (
+    <img src={url} alt={name} onClick={() => window.open(url,"_blank")} style={{ maxWidth:240, maxHeight:180, borderRadius:12, cursor:"pointer", display:"block", marginTop:6, objectFit:"cover", border:"1px solid var(--border)" }}/>
+  );
+  if (isPdf(url)) return (
+    <a href={url} target="_blank" rel="noopener noreferrer" style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"8px 12px", background:"#fee2e2", color:"#dc2626", borderRadius:10, fontSize:13, textDecoration:"none", marginTop:6 }}>📄 {name||"PDF"}</a>
+  );
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"8px 12px", background:"var(--bg3)", color:"var(--text2)", borderRadius:10, fontSize:13, textDecoration:"none", marginTop:6 }}>📎 {name||"Fichier"}</a>
+  );
+}
+
+// ─── SOCIAL MESSAGE BUBBLE ───────────────────────────────────────────────────
+function MsgBubble({ msg, myUser, onLike }) {
+  const isMine = msg.username === (myUser || "Anonyme");
+  const c = avatarColor(msg.username);
+  const likes = msg.likes || {};
+  const likeCount = Object.keys(likes).length;
+  const iLiked = likes[myUser || "Anonyme"];
+
+  return (
+    <div className="msg-bubble" style={{ display:"flex", flexDirection: isMine ? "row-reverse" : "row", alignItems:"flex-end", gap:8, marginBottom:2 }}>
+      {!isMine && <Avatar name={msg.username} size={30} />}
+      <div style={{ maxWidth:"72%", display:"flex", flexDirection:"column", alignItems: isMine ? "flex-end" : "flex-start" }}>
+        {!isMine && <span style={{ fontSize:11, fontWeight:600, color:c, marginBottom:3, marginLeft:4 }}>{msg.username}</span>}
+        <div style={{
+          background: isMine ? `linear-gradient(135deg, #6366f1, #8b5cf6)` : "var(--card)",
+          color: isMine ? "#fff" : "var(--text)",
+          border: isMine ? "none" : "1px solid var(--border)",
+          borderRadius: isMine ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+          padding: "10px 14px",
+          fontSize: 14,
+          lineHeight: 1.45,
+          boxShadow: isMine ? "0 2px 8px rgba(99,102,241,0.35)" : "0 1px 3px rgba(0,0,0,0.06)",
+          wordBreak: "break-word",
+          whiteSpace: "pre-wrap",
+        }}>
+          {msg.text}
+          <FileAttachment url={msg.file_url} name={msg.file_name} />
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:4, flexDirection: isMine ? "row-reverse" : "row" }}>
+          <span style={{ fontSize:10, color:"var(--text3)" }}>{msg.time}</span>
+          <button onClick={() => onLike(msg)} style={{
+            background: iLiked ? "#fee2e2" : "transparent",
+            border: "none", borderRadius:10, padding:"2px 6px",
+            fontSize:12, cursor:"pointer", color: iLiked ? "#ef4444" : "var(--text3)",
+            display:"flex", alignItems:"center", gap:3,
+          }}>
+            {iLiked ? "❤️" : "🤍"} {likeCount > 0 && <span style={{ fontSize:11 }}>{likeCount}</span>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── SCREEN SHARE ─────────────────────────────────────────────────────────────
+async function captureScreen() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor:"always" }, audio: false });
+    const video = document.createElement("video");
+    video.srcObject = stream;
+    await new Promise(res => { video.onloadedmetadata = () => { video.play(); res(); }; });
+    await new Promise(res => setTimeout(res, 150));
+    const canvas = document.createElement("canvas");
+    const maxW = 1280;
+    const scale = Math.min(1, maxW / video.videoWidth);
+    canvas.width  = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+    stream.getTracks().forEach(t => t.stop());
+    return new Promise(res => canvas.toBlob(blob => res(new File([blob], `screen-${Date.now()}.jpg`, { type:"image/jpeg" })), "image/jpeg", 0.82));
+  } catch (e) {
+    stream?.getTracks().forEach(t => t.stop());
+    if (e.name !== "AbortError") alert("Impossible de capturer l'écran : " + e.message);
+    return null;
+  }
+}
+
+// ─── SOCIAL CHAT COMPONENT ───────────────────────────────────────────────────
+function SocialChat({ messages, myUser, onSend, onLike, onFileUpload, typingUsers, onlineUsers, uploading }) {
+  const [text, setText] = useState("");
+  const endRef  = useRef(null);
+  const fileRef = useRef(null);
+  const [typing, , setTyping] = useTypingPresenceLocal();
+
+  // Scroll to bottom on mount and on new messages
+  useEffect(() => {
+    endRef.current?.scrollIntoView();
+  }, [messages.length]);
+
+  async function handleSend() {
+    if (!text.trim()) return;
+    await onSend(text.trim(), null, null);
+    setText("");
+    setTyping(false);
+  }
+
+  async function handleScreen() {
+    const file = await captureScreen();
+    if (file) await onFileUpload(file);
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 240px)", minHeight:400 }}>
+      {/* Chat header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", borderBottom:"1px solid var(--border)", background:"var(--card)", borderRadius:"12px 12px 0 0" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ fontSize:18 }}>💬</div>
+          <div>
+            <div style={{ fontSize:14, fontWeight:700, color:"var(--text)" }}>Espace partagé</div>
+            <div style={{ fontSize:11, color:"#22c55e" }}>
+              {onlineUsers.length > 0 ? `${onlineUsers.length} en ligne · ${onlineUsers.slice(0,3).join(", ")}${onlineUsers.length>3?" ...":""}` : "Personne en ligne"}
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize:11, color:"var(--text3)" }}>{messages.length} message{messages.length!==1?"s":""}</div>
+      </div>
+
+      {/* Messages */}
+      <div style={{ flex:1, overflowY:"auto", padding:"16px 12px", display:"flex", flexDirection:"column", gap:8, background:"var(--bg3)" }}>
+        {messages.length === 0 && (
+          <div style={{ textAlign:"center", color:"var(--text3)", fontSize:14, margin:"auto" }}>
+            <div style={{ fontSize:40, marginBottom:8 }}>💬</div>
+            Personne n'a encore écrit.<br/>Soyez le premier !
+          </div>
+        )}
+        {/* Group messages by sender to collapse avatars */}
+        {messages.map((msg, i) => {
+          const prev = messages[i-1];
+          const sameAsPrev = prev && prev.username === msg.username;
+          return (
+            <div key={msg.id} style={{ marginTop: sameAsPrev ? 1 : 8 }}>
+              <MsgBubble msg={msg} myUser={myUser} onLike={onLike} />
+            </div>
+          );
+        })}
+        <TypingIndicator users={typingUsers} />
+        <div ref={endRef} />
+      </div>
+
+      {/* Input bar */}
+      <div style={{ padding:"10px 12px", background:"var(--card)", borderTop:"1px solid var(--border)", borderRadius:"0 0 12px 12px" }}>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <Avatar name={myUser || "?"} size={32} />
+          <input
+            value={text}
+            onChange={e => { setText(e.target.value); typing(e.target.value.length > 0); }}
+            onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSend()}
+            placeholder="Écris un message..."
+            style={{ flex:1, padding:"10px 14px", border:"1px solid var(--border)", borderRadius:22, fontSize:14, background:"var(--ibg)", color:"var(--text)" }}
+          />
+          <button onClick={() => fileRef.current.click()} disabled={uploading}
+            title="Envoyer un fichier ou une photo"
+            style={{ width:38, height:38, borderRadius:"50%", border:"1px solid var(--border)", background:"var(--bbg)", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {uploading ? "⏳" : "📎"}
+          </button>
+          <button onClick={handleScreen} title="Partager son écran (screenshot)"
+            style={{ width:38, height:38, borderRadius:"50%", border:"1px solid var(--border)", background:"var(--bbg)", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            📺
+          </button>
+          <button onClick={handleSend}
+            style={{ width:38, height:38, borderRadius:"50%", border:"none", background:"linear-gradient(135deg,#6366f1,#8b5cf6)", cursor:"pointer", fontSize:16, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            ➤
+          </button>
+          <input type="file" ref={fileRef} style={{ display:"none" }} accept="image/*,.pdf,.doc,.docx" onChange={e => { if(e.target.files[0]) onFileUpload(e.target.files[0]); e.target.value=""; }}/>
+        </div>
+        <div style={{ fontSize:10, color:"var(--text3)", marginTop:4, paddingLeft:46 }}>
+          📺 = partager une capture d'écran · Entrée pour envoyer
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Tiny wrapper so SocialChat can call typing setter
+function useTypingPresenceLocal() {
+  const fn = useRef(() => {});
+  return [fn.current, null, (v) => fn.current(v)];
+}
+
+// ─── TASK ENTRAIDE (compact, par tâche) ──────────────────────────────────────
+function TaskHelp({ hwId, myUser }) {
+  const [helpers, setHelpers] = useState([]);
+  const [needers, setNeeders] = useState([]);
+  const [myStatus, setMyStatus] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => { if (open) load(); }, [open, hwId]);
+
+  async function load() {
+    const { data } = await supabase.from("task_help").select("*").eq("hw_id", hwId);
+    if (data) {
+      setHelpers(data.filter(r => r.status === "gere"));
+      setNeeders(data.filter(r => r.status === "aide"));
+      setMyStatus(data.find(r => r.username === (myUser || "Anonyme"))?.status || null);
+    }
+  }
+
+  async function toggle(status) {
+    const name = myUser || "Anonyme";
+    const { data: existing } = await supabase.from("task_help").select("*").eq("hw_id", hwId).eq("username", name).single().catch(() => ({ data: null }));
+    if (existing) {
+      if (existing.status === status) await supabase.from("task_help").delete().eq("id", existing.id);
+      else await supabase.from("task_help").update({ status }).eq("id", existing.id);
+    } else {
+      await supabase.from("task_help").insert({ hw_id: hwId, username: name, status });
+    }
+    load();
+  }
+
+  const total = helpers.length + needers.length;
+
+  return (
+    <div style={{ marginTop:6 }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        background:"none", border:"none", cursor:"pointer", fontSize:11, color:"var(--text3)", padding:0,
+        display:"flex", alignItems:"center", gap:4,
+      }}>
+        🤝 Entraide {total > 0 && <span style={{ background:"var(--border)", borderRadius:10, padding:"1px 6px", fontSize:10 }}>{total}</span>}
+        <span style={{ fontSize:9 }}>{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div style={{ marginTop:6, padding:"8px 10px", background:"var(--bg3)", borderRadius:8, border:"1px solid var(--border)", animation:"fadeUp 0.2s ease" }}>
+          <div style={{ display:"flex", gap:6, marginBottom:8, flexWrap:"wrap" }}>
+            <button onClick={() => toggle("gere")} style={{ padding:"3px 10px", borderRadius:20, fontSize:11, cursor:"pointer", fontWeight:600, border:`1.5px solid ${myStatus==="gere"?"#10B981":"var(--border)"}`, background:myStatus==="gere"?"#d1fae5":"var(--bbg)", color:myStatus==="gere"?"#065f46":"var(--text2)" }}>✅ Je gère</button>
+            <button onClick={() => toggle("aide")} style={{ padding:"3px 10px", borderRadius:20, fontSize:11, cursor:"pointer", fontWeight:600, border:`1.5px solid ${myStatus==="aide"?"#F59E0B":"var(--border)"}`, background:myStatus==="aide"?"#fef3c7":"var(--bbg)", color:myStatus==="aide"?"#92400e":"var(--text2)" }}>🆘 J'ai besoin d'aide</button>
+          </div>
+          <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+            {helpers.length > 0 && (
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
+                <span style={{ fontSize:10, color:"#059669", fontWeight:600 }}>Peuvent aider :</span>
+                {helpers.map(r => <span key={r.id} style={{ fontSize:10, background:"#d1fae5", color:"#065f46", padding:"1px 7px", borderRadius:20 }}>⭐{r.username}</span>)}
+              </div>
+            )}
+            {needers.length > 0 && (
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
+                <span style={{ fontSize:10, color:"#d97706", fontWeight:600 }}>Cherchent de l'aide :</span>
+                {needers.map(r => <span key={r.id} style={{ fontSize:10, background:"#fef3c7", color:"#92400e", padding:"1px 7px", borderRadius:20 }}>{r.username}</span>)}
+              </div>
+            )}
+            {helpers.length === 0 && needers.length === 0 && <span style={{ fontSize:10, color:"var(--text3)" }}>Personne encore — sois le premier !</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── DEVOIR ITEM ─────────────────────────────────────────────────────────────
+function HwItem({ item, subject, myUser, onToggle, onDelete }) {
+  const [removing, setRemoving] = useState(false);
+
+  function handleToggle() {
+    if (!item.done) {
+      setRemoving(true);
+      setTimeout(() => { onToggle(item.id, item.done); setRemoving(false); }, 320);
+    } else onToggle(item.id, item.done);
+  }
+
+  return (
+    <div className={`hw-item${removing?" removing":""}`} style={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:10, padding:"10px 14px", opacity:item.done ? 0.45 : 1 }}>
+      <div style={{ display:"flex", alignItems:"flex-start", gap:10 }}>
+        <input type="checkbox" checked={item.done} onChange={handleToggle}
+          style={{ width:16, height:16, cursor:"pointer", flexShrink:0, marginTop:2, accentColor:subject.color }}
+        />
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontSize:14, color:"var(--text)", textDecoration:item.done?"line-through":"none", lineHeight:1.4 }}>{item.text}</div>
+          <div style={{ display:"flex", gap:10, marginTop:3, flexWrap:"wrap", alignItems:"center" }}>
+            {item.date && <span style={{ fontSize:11, color:subject.color, fontWeight:600 }}>📅 Pour le {new Date(item.date+"T12:00:00").toLocaleDateString("fr-FR")}</span>}
+            {item.added_by && <span style={{ fontSize:11, color:"var(--text3)" }}>par {item.added_by}</span>}
+          </div>
+          {/* Entraide par tâche */}
+          <TaskHelp hwId={item.id} myUser={myUser} />
+        </div>
+        <button onClick={() => onDelete(item.id)} style={{ padding:"3px 8px", border:"none", borderRadius:6, background:"#fee2e2", color:"#dc2626", fontSize:11, cursor:"pointer", flexShrink:0 }}>✕</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── COUNTDOWN ────────────────────────────────────────────────────────────────
 function Countdown({ dark }) {
   const [tl, setTl] = useState(null);
   useEffect(() => {
     const fn = () => {
-      const diff = CONCOURS_DATE - new Date();
-      if (diff <= 0) { setTl(null); return; }
-      setTl({ days:Math.floor(diff/86400000), hours:Math.floor((diff%86400000)/3600000), minutes:Math.floor((diff%3600000)/60000), seconds:Math.floor((diff%60000)/1000) });
+      const d = CONCOURS_DATE - new Date();
+      if (d <= 0) { setTl(null); return; }
+      setTl({ days:Math.floor(d/86400000), hours:Math.floor((d%86400000)/3600000), minutes:Math.floor((d%3600000)/60000), seconds:Math.floor((d%60000)/1000) });
     };
-    fn(); const id=setInterval(fn,1000); return()=>clearInterval(id);
-  },[]);
-  if(!tl)return null;
-  const urgency = tl.days<7?"#ef4444":tl.days<30?"#f59e0b":"#8b5cf6";
-  const bg = dark
-    ? (tl.days<7?"#450a0a":tl.days<30?"#451a03":"#2e1065")
-    : (tl.days<7?"#fff1f2":tl.days<30?"#fffbeb":"#f5f3ff");
+    fn(); const id = setInterval(fn, 1000); return () => clearInterval(id);
+  }, []);
+  if (!tl) return null;
+  const col = tl.days<7?"#ef4444":tl.days<30?"#f59e0b":"#8b5cf6";
+  const bg  = dark ? (tl.days<7?"#450a0a":tl.days<30?"#451a03":"#2e1065") : (tl.days<7?"#fff1f2":tl.days<30?"#fffbeb":"#f5f3ff");
   return (
-    <div className="fade-in" style={{background:bg,border:`1px solid ${urgency}44`,borderRadius:12,padding:"12px 16px",marginBottom:"1rem",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-      <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <span style={{fontSize:20,display:"inline-block",animation:"pulseBeat 2s ease infinite"}}>🎯</span>
+    <div className="fade-up" style={{ background:bg, border:`1px solid ${col}44`, borderRadius:12, padding:"10px 14px", marginBottom:"1rem", display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+        <span style={{ fontSize:18, animation:"pulse 2s infinite" }}>🎯</span>
         <div>
-          <div style={{fontSize:12,fontWeight:700,color:urgency,textTransform:"uppercase",letterSpacing:"0.05em"}}>Concours Blanc — 30 mai 2026</div>
-          <div style={{fontSize:11,color:"var(--text3)",marginTop:1}}>Chaque minute compte. Bonne révision !</div>
+          <div style={{ fontSize:11, fontWeight:700, color:col, textTransform:"uppercase", letterSpacing:"0.06em" }}>Concours Blanc — 30 mai 2026</div>
+          <div style={{ fontSize:10, color:"var(--text3)" }}>Bonne révision !</div>
         </div>
       </div>
-      <div style={{display:"flex",gap:8}}>
-        {[{val:tl.days,label:"jours"},{val:tl.hours,label:"heures"},{val:tl.minutes,label:"min"},{val:tl.seconds,label:"sec"}].map(({val,label})=>(
-          <div key={label} style={{textAlign:"center",background:"var(--card)",border:`1px solid ${urgency}44`,borderRadius:8,padding:"6px 10px",minWidth:48}}>
-            <div style={{fontSize:20,fontWeight:800,color:urgency,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{String(val).padStart(2,"0")}</div>
-            <div style={{fontSize:10,color:"var(--text3)",marginTop:2}}>{label}</div>
+      <div style={{ display:"flex", gap:6 }}>
+        {[{v:tl.days,l:"j"},{v:tl.hours,l:"h"},{v:tl.minutes,l:"m"},{v:tl.seconds,l:"s"}].map(({v,l})=>(
+          <div key={l} style={{ textAlign:"center", background:"var(--card)", border:`1px solid ${col}33`, borderRadius:8, padding:"5px 8px", minWidth:40 }}>
+            <div style={{ fontSize:18, fontWeight:800, color:col, fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{String(v).padStart(2,"0")}</div>
+            <div style={{ fontSize:9, color:"var(--text3)" }}>{l}</div>
           </div>
         ))}
       </div>
@@ -112,388 +465,440 @@ function Countdown({ dark }) {
   );
 }
 
-// ─── AVATAR ──────────────────────────────────────────────────────────────────
-function Avatar({ name }) {
-  const colors=["#3B82F6","#10B981","#F59E0B","#EF4444","#8B5CF6","#EC4899"];
-  const idx=(name||"").split("").reduce((a,c)=>a+c.charCodeAt(0),0)%colors.length;
-  return <div style={{width:32,height:32,borderRadius:"50%",flexShrink:0,background:colors[idx]+"22",color:colors[idx],border:`1px solid ${colors[idx]}55`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:600}}>{(name||"?")[0].toUpperCase()}</div>;
-}
-
-// ─── FILES ───────────────────────────────────────────────────────────────────
-const isImage=u=>u&&/\.(jpg|jpeg|png|gif|webp)$/i.test(u);
-const isPdf=u=>u&&/\.pdf$/i.test(u);
-function renderFile(url,name){
-  if(!url)return null;
-  if(isImage(url))return<img src={url} alt={name} style={{maxWidth:260,maxHeight:200,borderRadius:8,border:"1px solid var(--border)",cursor:"pointer",marginTop:6,display:"block"}} onClick={()=>window.open(url,"_blank")}/>;
-  if(isPdf(url))return<a href={url} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"#fee2e2",color:"#dc2626",borderRadius:8,fontSize:13,textDecoration:"none",marginTop:6}}>📄 {name||"PDF"}</a>;
-  return<a href={url} target="_blank" rel="noopener noreferrer" style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 12px",background:"var(--bg3)",color:"var(--text2)",borderRadius:8,fontSize:13,textDecoration:"none",marginTop:6}}>📎 {name||"Fichier"}</a>;
-}
-
 // ─── POMODORO ────────────────────────────────────────────────────────────────
-function Pomodoro(){
-  const[phase,setPhase]=useState("work");const[seconds,setSeconds]=useState(25*60);const[running,setRunning]=useState(false);const[cycles,setCycles]=useState(0);const ref=useRef(null);
-  useEffect(()=>{
-    if(running){ref.current=setInterval(()=>{setSeconds(s=>{if(s<=1){clearInterval(ref.current);setRunning(false);if(phase==="work"){setPhase("break");setSeconds(5*60);setCycles(c=>c+1);}else{setPhase("work");setSeconds(25*60);}return 0;}return s-1;});},1000);}else clearInterval(ref.current);return()=>clearInterval(ref.current);
-  },[running,phase]);
+function Pomodoro() {
+  const [phase,setPhase]=useState("work");const[seconds,setSeconds]=useState(25*60);const[running,setRunning]=useState(false);const[cycles,setCycles]=useState(0);const ref=useRef(null);
+  useEffect(()=>{if(running){ref.current=setInterval(()=>{setSeconds(s=>{if(s<=1){clearInterval(ref.current);setRunning(false);if(phase==="work"){setPhase("break");setSeconds(5*60);setCycles(c=>c+1);}else{setPhase("work");setSeconds(25*60);}return 0;}return s-1;});},1000);}else clearInterval(ref.current);return()=>clearInterval(ref.current);},[running,phase]);
   const mm=String(Math.floor(seconds/60)).padStart(2,"0");const ss=String(seconds%60).padStart(2,"0");
   const pct=phase==="work"?1-seconds/(25*60):1-seconds/(5*60);const color=phase==="work"?"#8B5CF6":"#10B981";
   return(
-    <div style={{textAlign:"center",marginBottom:"1.5rem"}}>
-      <div style={{position:"relative",width:140,height:140,margin:"0 auto 12px"}}>
-        <svg width="140" height="140" style={{transform:"rotate(-90deg)"}}>
-          <circle cx="70" cy="70" r="60" fill="none" stroke="var(--border)" strokeWidth="8"/>
-          <circle cx="70" cy="70" r="60" fill="none" stroke={color} strokeWidth="8" strokeDasharray={`${2*Math.PI*60}`} strokeDashoffset={`${2*Math.PI*60*(1-pct)}`} strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/>
-        </svg>
+    <div style={{textAlign:"center"}}>
+      <div style={{position:"relative",width:130,height:130,margin:"0 auto 10px"}}>
+        <svg width="130" height="130" style={{transform:"rotate(-90deg)"}}><circle cx="65" cy="65" r="55" fill="none" stroke="var(--border)" strokeWidth="7"/><circle cx="65" cy="65" r="55" fill="none" stroke={color} strokeWidth="7" strokeDasharray={`${2*Math.PI*55}`} strokeDashoffset={`${2*Math.PI*55*(1-pct)}`} strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/></svg>
         <div style={{position:"absolute",top:"50%",left:"50%",transform:"translate(-50%,-50%)",textAlign:"center"}}>
-          <div style={{fontSize:26,fontWeight:700,color:"var(--text)",fontVariantNumeric:"tabular-nums"}}>{mm}:{ss}</div>
-          <div style={{fontSize:11,color,fontWeight:600}}>{phase==="work"?"FOCUS":"PAUSE"}</div>
+          <div style={{fontSize:24,fontWeight:700,color:"var(--text)",fontVariantNumeric:"tabular-nums"}}>{mm}:{ss}</div>
+          <div style={{fontSize:10,color,fontWeight:700}}>{phase==="work"?"FOCUS":"PAUSE"}</div>
         </div>
       </div>
-      <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:8}}>
-        <button onClick={()=>setRunning(r=>!r)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:running?"#fee2e2":color,color:running?"#dc2626":"#fff",fontWeight:600,cursor:"pointer",fontSize:14}}>{running?"⏸ Pause":"▶ Démarrer"}</button>
-        <button onClick={()=>{setRunning(false);setPhase("work");setSeconds(25*60);}} style={{padding:"8px 14px",borderRadius:8,border:"1px solid var(--border)",background:"var(--btn-bg)",color:"var(--text2)",cursor:"pointer",fontSize:14}}>↺</button>
+      <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+        <button onClick={()=>setRunning(r=>!r)} style={{padding:"7px 18px",borderRadius:8,border:"none",background:running?"#fee2e2":color,color:running?"#dc2626":"#fff",fontWeight:600,cursor:"pointer",fontSize:13}}>{running?"⏸":"▶"}</button>
+        <button onClick={()=>{setRunning(false);setPhase("work");setSeconds(25*60);}} style={{padding:"7px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--bbg)",color:"var(--text2)",cursor:"pointer"}}>↺</button>
       </div>
-      <div style={{fontSize:12,color:"var(--text3)"}}>🍅 {cycles} cycles · 25min travail / 5min pause</div>
+      <div style={{fontSize:11,color:"var(--text3)",marginTop:8}}>🍅 {cycles} cycles</div>
     </div>
   );
 }
 
 // ─── FOCUS MODE ──────────────────────────────────────────────────────────────
-function FocusMode({homework,onExit}){
+function FocusMode({ homework, onExit }) {
   const pending=homework.filter(h=>!h.done);const[lofiIdx,setLofiIdx]=useState(0);const[lofiOn,setLofiOn]=useState(false);
   return(
-    <div style={{position:"fixed",inset:0,background:"#0f0f1a",zIndex:1000,display:"flex",flexDirection:"column",padding:"1.5rem",overflowY:"auto",animation:"fadeInDown 0.3s ease"}}>
+    <div style={{position:"fixed",inset:0,background:"#0a0a14",zIndex:1000,display:"flex",flexDirection:"column",padding:"1.5rem",overflowY:"auto",animation:"fadeUp 0.3s ease"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"1.5rem"}}>
         <div><h2 style={{margin:0,fontSize:18,fontWeight:700,color:"#e2e8f0"}}>🎯 Mode Focus</h2><p style={{margin:0,fontSize:12,color:"#64748b"}}>Concentre-toi. Tu peux le faire.</p></div>
-        <button onClick={onExit} style={{padding:"8px 16px",borderRadius:8,border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer",fontSize:13}}>✕ Quitter</button>
+        <button onClick={onExit} style={{padding:"8px 16px",borderRadius:8,border:"1px solid #334155",background:"transparent",color:"#94a3b8",cursor:"pointer"}}>✕ Quitter</button>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"1.5rem",maxWidth:900,margin:"0 auto",width:"100%"}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"1.5rem",maxWidth:880,margin:"0 auto",width:"100%"}}>
         <div>
           <div style={{background:"#1e1e2e",borderRadius:14,padding:"1rem",marginBottom:"1rem"}}>
-            <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:12}}>📋 Devoirs à faire ({pending.length})</div>
+            <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:10}}>📋 À faire ({pending.length})</div>
             {pending.length===0?<div style={{color:"#64748b",fontSize:13}}>🎉 Tout est fait !</div>:(
-              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {pending.map(hw=>{const sub=SUBJECTS.find(s=>s.id===hw.subject_id);return(
-                  <div key={hw.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 10px",background:"#2d2d44",borderRadius:8,borderLeft:`3px solid ${sub?.color||"#6366f1"}`,animation:"slideIn 0.3s ease"}}>
-                    <span style={{fontSize:16}}>{sub?.icon}</span>
-                    <div><div style={{fontSize:13,color:"#e2e8f0"}}>{hw.text}</div>{hw.date&&<div style={{fontSize:11,color:sub?.color||"#a78bfa"}}>Pour le {new Date(hw.date+"T12:00:00").toLocaleDateString("fr-FR")}</div>}</div>
+                  <div key={hw.id} style={{display:"flex",gap:8,padding:"7px 10px",background:"#2d2d44",borderRadius:8,borderLeft:`3px solid ${sub?.color||"#6366f1"}`}}>
+                    <span>{sub?.icon}</span><div style={{fontSize:13,color:"#e2e8f0"}}>{hw.text}</div>
                   </div>
                 );})}
               </div>
             )}
           </div>
           <div style={{background:"#1e1e2e",borderRadius:14,padding:"1rem"}}>
-            <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:10}}>🎧 Musique Lo-Fi</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
-              {LOFI_STREAMS.map((l,i)=><button key={i} onClick={()=>{setLofiIdx(i);setLofiOn(true);}} style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${lofiIdx===i&&lofiOn?"#7c3aed":"#334155"}`,background:lofiIdx===i&&lofiOn?"#4c1d95":"transparent",color:lofiIdx===i&&lofiOn?"#e2e8f0":"#94a3b8",fontSize:12,cursor:"pointer"}}>{l.name}</button>)}
-              <button onClick={()=>setLofiOn(false)} style={{padding:"5px 10px",borderRadius:8,border:"1px solid #334155",background:"transparent",color:"#ef4444",fontSize:12,cursor:"pointer"}}>⏹ Stop</button>
+            <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:8}}>🎧 Lo-Fi</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
+              {LOFI_STREAMS.map((l,i)=><button key={i} onClick={()=>{setLofiIdx(i);setLofiOn(true);}} style={{padding:"4px 10px",borderRadius:8,border:`1px solid ${lofiIdx===i&&lofiOn?"#7c3aed":"#334155"}`,background:lofiIdx===i&&lofiOn?"#4c1d95":"transparent",color:lofiIdx===i&&lofiOn?"#e2e8f0":"#94a3b8",fontSize:11,cursor:"pointer"}}>{l.name}</button>)}
+              <button onClick={()=>setLofiOn(false)} style={{padding:"4px 10px",borderRadius:8,border:"1px solid #334155",background:"transparent",color:"#ef4444",fontSize:11,cursor:"pointer"}}>⏹</button>
             </div>
-            {lofiOn?<iframe src={LOFI_STREAMS[lofiIdx].url} style={{width:"100%",height:80,border:"none",borderRadius:8,display:"block"}} allow="autoplay" title="lofi"/>:<div style={{fontSize:12,color:"#475569",textAlign:"center",padding:"12px 0"}}>Clique sur un style 🎵</div>}
+            {lofiOn?<iframe src={LOFI_STREAMS[lofiIdx].url} style={{width:"100%",height:70,border:"none",borderRadius:8}} allow="autoplay" title="lofi"/>:<div style={{fontSize:11,color:"#475569",textAlign:"center",padding:"10px 0"}}>Choisis un style 🎵</div>}
           </div>
         </div>
         <div style={{background:"#1e1e2e",borderRadius:14,padding:"1.5rem"}}>
-          <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:"1rem"}}>🍅 Timer Pomodoro</div>
+          <div style={{fontSize:13,fontWeight:600,color:"#a78bfa",marginBottom:"1rem"}}>🍅 Pomodoro</div>
           <Pomodoro/>
-          <div style={{marginTop:"1rem",background:"#2d2d44",borderRadius:10,padding:"10px 12px",fontSize:12,color:"#94a3b8",lineHeight:1.6}}>
-            <strong style={{color:"#e2e8f0"}}>Méthode Pomodoro :</strong><br/>▶ 25 min de travail intense<br/>☕ 5 min de pause<br/>🔄 Répète 4x puis grande pause
-          </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// ─── MENTORAT ─────────────────────────────────────────────────────────────────
-function MentoratBadge({subjectId,username}){
-  const[mentors,setMentors]=useState([]);const[myStatus,setMyStatus]=useState(null);const[loading,setLoading]=useState(true);
-  useEffect(()=>{load();},[subjectId]);
-  async function load(){setLoading(true);const{data}=await supabase.from("mentors").select("*").eq("subject_id",subjectId);if(data){setMentors(data);if(username)setMyStatus(data.find(m=>m.username===username)?.status||null);}setLoading(false);}
-  async function setStatus(status){const name=username||"Anonyme";const existing=mentors.find(m=>m.username===name);if(existing){if(existing.status===status){await supabase.from("mentors").delete().eq("id",existing.id);setMyStatus(null);}else{await supabase.from("mentors").update({status}).eq("id",existing.id);setMyStatus(status);}}else{await supabase.from("mentors").insert({subject_id:subjectId,username:name,status});setMyStatus(status);}load();}
-  const helpers=mentors.filter(m=>m.status==="gere");const needers=mentors.filter(m=>m.status==="aide");
-  return(
-    <div className="fade-in" style={{background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 12px",marginTop:"1rem"}}>
-      <div style={{fontSize:12,fontWeight:600,color:"var(--text)",marginBottom:8}}>🤝 Système d'entraide</div>
-      <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap"}}>
-        <button onClick={()=>setStatus("gere")} style={{padding:"5px 12px",borderRadius:8,fontSize:12,cursor:"pointer",fontWeight:600,border:myStatus==="gere"?"2px solid #10B981":"1px solid var(--border)",background:myStatus==="gere"?"#d1fae5":"var(--btn-bg)",color:myStatus==="gere"?"#065f46":"var(--text2)"}}>✅ Je gère cette leçon</button>
-        <button onClick={()=>setStatus("aide")} style={{padding:"5px 12px",borderRadius:8,fontSize:12,cursor:"pointer",fontWeight:600,border:myStatus==="aide"?"2px solid #F59E0B":"1px solid var(--border)",background:myStatus==="aide"?"#fef3c7":"var(--btn-bg)",color:myStatus==="aide"?"#92400e":"var(--text2)"}}>🆘 J'ai besoin d'aide</button>
-      </div>
-      {!loading&&(<div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-        {helpers.length>0&&<div><div style={{fontSize:11,color:"#059669",fontWeight:600,marginBottom:4}}>✅ Peuvent aider :</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{helpers.map(m=><span key={m.id} style={{fontSize:11,background:"#d1fae5",color:"#065f46",padding:"2px 8px",borderRadius:20}}>⭐ {m.username}</span>)}</div></div>}
-        {needers.length>0&&<div><div style={{fontSize:11,color:"#d97706",fontWeight:600,marginBottom:4}}>🆘 Cherchent de l'aide :</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{needers.map(m=><span key={m.id} style={{fontSize:11,background:"#fef3c7",color:"#92400e",padding:"2px 8px",borderRadius:20}}>{m.username}</span>)}</div></div>}
-        {helpers.length===0&&needers.length===0&&<span style={{fontSize:11,color:"var(--text3)"}}>Personne n'a encore indiqué son statut.</span>}
-      </div>)}
-    </div>
-  );
-}
-
-// ─── DEVOIR ITEM ANIMÉ ────────────────────────────────────────────────────────
-function HwItem({item,subject,onToggle,onDelete}){
-  const[checking,setChecking]=useState(false);
-  function handleToggle(){
-    if(!item.done){setChecking(true);setTimeout(()=>{onToggle(item.id,item.done);setChecking(false);},350);}
-    else onToggle(item.id,item.done);
-  }
-  return(
-    <div className={`hw-item${checking?" checking":""}`} style={{display:"flex",alignItems:"center",gap:12,background:"var(--card)",border:"1px solid var(--border)",borderRadius:8,padding:"10px 12px",opacity:item.done?0.5:1}}>
-      <input type="checkbox" checked={item.done} onChange={handleToggle} style={{width:16,height:16,cursor:"pointer",flexShrink:0,accentColor:subject.color}}/>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{fontSize:14,color:"var(--text)",textDecoration:item.done?"line-through":"none"}}>{item.text}</div>
-        <div style={{display:"flex",gap:10,marginTop:2,flexWrap:"wrap"}}>
-          {item.date&&<span style={{fontSize:11,color:subject.color}}>Pour le {new Date(item.date+"T12:00:00").toLocaleDateString("fr-FR")}</span>}
-          {item.added_by&&<span style={{fontSize:11,color:"var(--text3)"}}>par {item.added_by}</span>}
-        </div>
-      </div>
-      <button onClick={()=>onDelete(item.id)} style={{padding:"4px 8px",border:"none",borderRadius:6,background:"#fee2e2",color:"#dc2626",fontSize:11,cursor:"pointer"}}>Suppr.</button>
     </div>
   );
 }
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
-export default function App(){
-  const[dark,toggleDark]=useDarkMode();
-  const[tab,setTab]=useState("devoirs");const[selectedSubject,setSelectedSubject]=useState(null);
-  const[homework,setHomework]=useState([]);const[messages,setMessages]=useState([]);
-  const[newHW,setNewHW]=useState({text:"",date:""});const[newMsg,setNewMsg]=useState("");
-  const[username,setUsername]=useState(()=>localStorage.getItem("username")||"");
-  const[usernameSet,setUsernameSet]=useState(()=>!!localStorage.getItem("username"));
-  const[loading,setLoading]=useState(true);const[uploading,setUploading]=useState(false);const[focusMode,setFocusMode]=useState(false);
-  const[threads,setThreads]=useState([]);const[selectedThread,setSelectedThread]=useState(null);const[threadMessages,setThreadMessages]=useState([]);
-  const[newThreadTitle,setNewThreadTitle]=useState("");const[showNewThread,setShowNewThread]=useState(false);const[newThreadMsg,setNewThreadMsg]=useState("");const[threadSubject,setThreadSubject]=useState(null);
-  const messagesEndRef=useRef(null);const threadEndRef=useRef(null);const fileInputRef=useRef(null);const threadFileRef=useRef(null);
+export default function App() {
+  const [dark, toggleDark] = useDarkMode();
+  const [tab, setTab]               = useState("devoirs");
+  const [selectedSubject, setSub]   = useState(null);
+  const [homework, setHomework]     = useState([]);
+  const [messages, setMessages]     = useState([]);
+  const [newHW, setNewHW]           = useState({ text:"", date:"" });
+  const [username, setUsername]     = useState(() => localStorage.getItem("username") || "");
+  const [usernameSet, setUsernameSet] = useState(() => !!localStorage.getItem("username"));
+  const [loading, setLoading]       = useState(true);
+  const [uploading, setUploading]   = useState(false);
+  const [focusMode, setFocusMode]   = useState(false);
 
-  useEffect(()=>{loadAll();},[]);
-  useEffect(()=>{const ch=supabase.channel("messages").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"},p=>{setMessages(prev=>[...prev,p.new]);setTimeout(()=>messagesEndRef.current?.scrollIntoView({behavior:"smooth"}),100);}).subscribe();return()=>supabase.removeChannel(ch);},[]);
-  useEffect(()=>{if(!selectedThread)return;const ch=supabase.channel("thread_messages").on("postgres_changes",{event:"INSERT",schema:"public",table:"thread_messages"},p=>{if(p.new.thread_id===selectedThread.id){setThreadMessages(prev=>[...prev,p.new]);setTimeout(()=>threadEndRef.current?.scrollIntoView({behavior:"smooth"}),100);}}).subscribe();return()=>supabase.removeChannel(ch);},[selectedThread]);
-  useEffect(()=>{const ch=supabase.channel("devoirs").on("postgres_changes",{event:"*",schema:"public",table:"devoirs"},()=>loadHomework()).subscribe();return()=>supabase.removeChannel(ch);},[]);
+  const [threads, setThreads]             = useState([]);
+  const [selectedThread, setSelThread]    = useState(null);
+  const [threadMessages, setThreadMsgs]   = useState([]);
+  const [newThreadTitle, setNewThreadTitle] = useState("");
+  const [showNewThread, setShowNewThread] = useState(false);
+  const [newThreadMsg, setNewThreadMsg]   = useState("");
+  const [threadSubject, setThreadSubject] = useState(null);
 
-  async function loadAll(){await Promise.all([loadHomework(),loadMessages(),loadThreads()]);setLoading(false);}
-  async function loadHomework(){const{data}=await supabase.from("devoirs").select("*").order("created_at");if(data)setHomework(data);}
-  async function loadMessages(){const{data}=await supabase.from("messages").select("*").order("created_at");if(data)setMessages(data);}
-  async function loadThreads(){const{data}=await supabase.from("threads").select("*").order("created_at",{ascending:false});if(data)setThreads(data);}
-  async function loadThreadMessages(id){const{data}=await supabase.from("thread_messages").select("*").eq("thread_id",id).order("created_at");if(data)setThreadMessages(data);}
-  async function openThread(t){setSelectedThread(t);await loadThreadMessages(t.id);}
-  async function createThread(){if(!newThreadTitle.trim()||!threadSubject)return;const{data}=await supabase.from("threads").insert({subject_id:threadSubject,title:newThreadTitle.trim(),created_by:username.trim()||"Anonyme"}).select().single();if(data){setThreads(prev=>[data,...prev]);setNewThreadTitle("");setShowNewThread(false);openThread(data);}}
-  async function addHomework(){if(!newHW.text.trim()||!selectedSubject)return;await supabase.from("devoirs").insert({subject_id:selectedSubject,text:newHW.text.trim(),date:newHW.date||null,done:false,added_by:username.trim()||"Anonyme"});setNewHW({text:"",date:""});}
-  async function toggleDone(id,done){await supabase.from("devoirs").update({done:!done}).eq("id",id);setHomework(prev=>prev.map(h=>h.id===id?{...h,done:!done}:h));}
-  async function deleteHW(id){await supabase.from("devoirs").delete().eq("id",id);setHomework(prev=>prev.filter(h=>h.id!==id));}
-  async function sendMessage(fileUrl=null,fileName=null){const text=newMsg.trim();if(!text&&!fileUrl)return;const now=new Date();const time=now.toLocaleString("fr-FR",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"});await supabase.from("messages").insert({username:username.trim()||"Anonyme",text:text||"",time,file_url:fileUrl||null,file_name:fileName||null});setNewMsg("");}
-  async function sendThreadMessage(fileUrl=null,fileName=null){const text=newThreadMsg.trim();if(!text&&!fileUrl)return;const now=new Date();const time=now.toLocaleString("fr-FR",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"});await supabase.from("thread_messages").insert({thread_id:selectedThread.id,username:username.trim()||"Anonyme",text:text||"",time,file_url:fileUrl||null,file_name:fileName||null});setNewThreadMsg("");}
-  async function handleFileUpload(e,isThread=false){const file=e.target.files[0];if(!file)return;setUploading(true);const ext=file.name.split(".").pop();const fileName=`${Date.now()}.${ext}`;const{error}=await supabase.storage.from("corrections").upload(fileName,file,{cacheControl:"3600",upsert:false});if(error){alert("Erreur upload : "+error.message);setUploading(false);return;}const{data:urlData}=supabase.storage.from("corrections").getPublicUrl(fileName);if(isThread)await sendThreadMessage(urlData.publicUrl,file.name);else await sendMessage(urlData.publicUrl,file.name);setUploading(false);e.target.value="";}
+  const threadEndRef  = useRef(null);
+  const threadFileRef = useRef(null);
 
-  const hwForSubject=id=>homework.filter(h=>h.subject_id===id);
-  const pending=id=>hwForSubject(id).filter(h=>!h.done).length;
-  const totalPending=SUBJECTS.reduce((a,s)=>a+pending(s.id),0);
-  const subject=SUBJECTS.find(s=>s.id===selectedSubject);
-  const threadsForSubject=id=>threads.filter(t=>t.subject_id===id);
+  // Ghost typing for main chat
+  const [chatTyping, chatOnline, setChatTyping] = useTypingPresence("presence-chat", usernameSet ? username : null);
+  // Ghost typing for current thread
+  const threadChName = selectedThread ? `presence-thread-${selectedThread.id}` : null;
+  const [thTyping, thOnline, setThTyping] = useTypingPresence(threadChName, usernameSet ? username : null);
 
-  const st={
-    container:{fontFamily:"system-ui,sans-serif",padding:"1rem",maxWidth:760,margin:"0 auto",background:"var(--bg)",minHeight:"100vh"},
-    tabs:{display:"flex",gap:8,margin:"1rem 0",borderBottom:"1px solid var(--border)",paddingBottom:"0.75rem",flexWrap:"wrap"},
-    tab:a=>({padding:"6px 14px",border:`1px solid ${a?"var(--border2)":"var(--border)"}`,borderRadius:8,background:a?"var(--card)":"transparent",fontSize:13,fontWeight:a?500:400,color:a?"var(--text)":"var(--text3)",cursor:"pointer"}),
-    grid:{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(160px,1fr))",gap:12},
-    card:(c,has)=>({background:"var(--card)",border:has?`2px solid ${c}`:"1px solid var(--border)",borderRadius:12,padding:"1rem",cursor:"pointer"}),
-    badge:(c,has)=>({display:"inline-block",fontSize:11,padding:"2px 8px",borderRadius:6,marginTop:8,background:has?c+"22":"var(--bg3)",color:has?c:"var(--text3)"}),
-    backBtn:{background:"none",border:"none",color:"var(--text3)",cursor:"pointer",fontSize:13,padding:0,marginBottom:"1rem"},
-    formBox:{background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:12,padding:"1rem",marginBottom:"1.5rem"},
-    input:{flex:"2 1 200px",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:8,fontSize:14,outline:"none",background:"var(--input-bg)",color:"var(--text)"},
-    inputSm:{flex:"1 1 130px",padding:"8px 12px",border:"1px solid var(--border)",borderRadius:8,fontSize:14,outline:"none",background:"var(--input-bg)",color:"var(--text)"},
-    btn:c=>({padding:"8px 16px",border:"1px solid var(--border)",borderRadius:8,background:"var(--btn-bg)",color:c||"var(--text)",fontSize:14,cursor:"pointer",fontWeight:500}),
-    chatBox:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:12,padding:"1rem",minHeight:280,maxHeight:400,overflowY:"auto",marginBottom:12,display:"flex",flexDirection:"column",gap:14},
-    bubble:{background:"var(--bg3)",borderRadius:"0 8px 8px 8px",padding:"8px 12px",fontSize:14,color:"var(--text)",display:"inline-block",maxWidth:"90%",lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"},
-    userBox:{background:"var(--bg3)",border:"1px solid var(--border)",borderRadius:12,padding:"1rem",marginBottom:"1.25rem"},
-    uploadBtn:{padding:"8px 12px",border:"1px solid var(--border)",borderRadius:8,background:"var(--btn-bg)",fontSize:14,cursor:"pointer",color:"var(--text2)"},
-    threadCard:{background:"var(--card)",border:"1px solid var(--border)",borderRadius:10,padding:"12px 14px",cursor:"pointer"},
-    pill:(c,a)=>({padding:"5px 12px",borderRadius:20,border:a?`2px solid ${c}`:"1px solid var(--border)",background:a?c+"18":"var(--btn-bg)",color:a?c:"var(--text3)",fontSize:12,cursor:"pointer",fontWeight:a?600:400}),
+  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    const ch = supabase.channel("rt-messages")
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"}, p => setMessages(prev=>[...prev,p.new]))
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"messages"}, p => setMessages(prev=>prev.map(m=>m.id===p.new.id?p.new:m)))
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, []);
+  useEffect(() => {
+    if (!selectedThread) return;
+    const ch = supabase.channel("rt-thread-msgs")
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"thread_messages"}, p => { if(p.new.thread_id===selectedThread.id) setThreadMsgs(prev=>[...prev,p.new]); })
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"thread_messages"}, p => setThreadMsgs(prev=>prev.map(m=>m.id===p.new.id?p.new:m)))
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [selectedThread]);
+  useEffect(() => {
+    const ch = supabase.channel("rt-devoirs").on("postgres_changes",{event:"*",schema:"public",table:"devoirs"},()=>loadHomework()).subscribe();
+    return () => supabase.removeChannel(ch);
+  }, []);
+
+  async function loadAll() { await Promise.all([loadHomework(), loadMessages(), loadThreads()]); setLoading(false); }
+  async function loadHomework() { const{data}=await supabase.from("devoirs").select("*").order("created_at"); if(data)setHomework(data); }
+  async function loadMessages() { const{data}=await supabase.from("messages").select("*").order("created_at"); if(data)setMessages(data); }
+  async function loadThreads() { const{data}=await supabase.from("threads").select("*").order("created_at",{ascending:false}); if(data)setThreads(data); }
+  async function loadThreadMessages(id) { const{data}=await supabase.from("thread_messages").select("*").eq("thread_id",id).order("created_at"); if(data)setThreadMsgs(data); }
+  async function openThread(t) { setSelThread(t); await loadThreadMessages(t.id); }
+
+  async function addHomework() {
+    if(!newHW.text.trim()||!selectedSubject)return;
+    await supabase.from("devoirs").insert({subject_id:selectedSubject,text:newHW.text.trim(),date:newHW.date||null,done:false,added_by:username.trim()||"Anonyme"});
+    setNewHW({text:"",date:""});
+  }
+  async function toggleDone(id,done) { await supabase.from("devoirs").update({done:!done}).eq("id",id); setHomework(prev=>prev.map(h=>h.id===id?{...h,done:!done}:h)); }
+  async function deleteHW(id) { await supabase.from("devoirs").delete().eq("id",id); setHomework(prev=>prev.filter(h=>h.id!==id)); }
+
+  async function likeMessage(msg, table="messages") {
+    const u = username || "Anonyme";
+    const cur = msg.likes || {};
+    const updated = { ...cur };
+    if (updated[u]) delete updated[u]; else updated[u] = true;
+    await supabase.from(table).update({ likes: updated }).eq("id", msg.id);
+  }
+
+  async function uploadFile(file, isThread=false) {
+    setUploading(true);
+    const ext = file.name.split(".").pop();
+    const fileName = `${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("corrections").upload(fileName, file, { cacheControl:"3600", upsert:false });
+    if (error) { alert("Erreur upload : "+error.message); setUploading(false); return null; }
+    const { data } = supabase.storage.from("corrections").getPublicUrl(fileName);
+    setUploading(false);
+    return { url: data.publicUrl, name: file.name };
+  }
+
+  async function sendMainMessage(text, fileUrl=null, fileName=null) {
+    if (!text && !fileUrl) return;
+    const now=new Date();const time=now.toLocaleString("fr-FR",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"});
+    await supabase.from("messages").insert({ username:username.trim()||"Anonyme", text:text||"", time, file_url:fileUrl||null, file_name:fileName||null });
+    setChatTyping(false);
+  }
+
+  async function handleMainFile(file) {
+    const res = await uploadFile(file, false);
+    if (res) await sendMainMessage(null, res.url, res.name);
+  }
+
+  async function sendThreadMessage(text, fileUrl=null, fileName=null) {
+    if (!text && !fileUrl) return;
+    const now=new Date();const time=now.toLocaleString("fr-FR",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"});
+    await supabase.from("thread_messages").insert({ thread_id:selectedThread.id, username:username.trim()||"Anonyme", text:text||"", time, file_url:fileUrl||null, file_name:fileName||null });
+    setNewThreadMsg("");
+    setThTyping(false);
+  }
+
+  async function handleThreadFile(file) {
+    const res = await uploadFile(file, true);
+    if (res) await sendThreadMessage(null, res.url, res.name);
+  }
+
+  async function createThread() {
+    if(!newThreadTitle.trim()||!threadSubject)return;
+    const{data}=await supabase.from("threads").insert({subject_id:threadSubject,title:newThreadTitle.trim(),created_by:username.trim()||"Anonyme"}).select().single();
+    if(data){setThreads(prev=>[data,...prev]);setNewThreadTitle("");setShowNewThread(false);openThread(data);}
+  }
+
+  const hwFor    = id => homework.filter(h=>h.subject_id===id);
+  const pending  = id => hwFor(id).filter(h=>!h.done).length;
+  const totalPending = SUBJECTS.reduce((a,s)=>a+pending(s.id),0);
+  const subject  = SUBJECTS.find(s=>s.id===selectedSubject);
+  const threadsFor = id => threads.filter(t=>t.subject_id===id);
+
+  // Styles
+  const st = {
+    container: { fontFamily:"system-ui,sans-serif", padding:"1rem", maxWidth:800, margin:"0 auto", background:"var(--bg)", minHeight:"100vh" },
+    tabs:  { display:"flex", gap:6, margin:"1rem 0", borderBottom:"1px solid var(--border)", paddingBottom:"0.75rem", flexWrap:"wrap" },
+    tab: a => ({ padding:"6px 14px", border:`1px solid ${a?"var(--border2)":"var(--border)"}`, borderRadius:8, background:a?"var(--card)":"transparent", fontSize:13, fontWeight:a?600:400, color:a?"var(--text)":"var(--text3)", cursor:"pointer" }),
+    grid:  { display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(155px,1fr))", gap:10 },
+    card:  (c,has) => ({ background:"var(--card)", border:has?`2px solid ${c}`:"1px solid var(--border)", borderRadius:14, padding:"1rem", cursor:"pointer" }),
+    badge: (c,has) => ({ display:"inline-block", fontSize:11, padding:"2px 9px", borderRadius:20, marginTop:8, background:has?c+"20":"var(--bg3)", color:has?c:"var(--text3)", fontWeight:600 }),
+    back:  { background:"none", border:"none", color:"var(--text3)", cursor:"pointer", fontSize:13, padding:0, marginBottom:"1rem" },
+    form:  { background:"var(--card)", border:"1px solid var(--border)", borderRadius:12, padding:"1rem", marginBottom:"1.25rem" },
+    inp:   { flex:"2 1 200px", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:9, fontSize:14, background:"var(--ibg)", color:"var(--text)", outline:"none" },
+    inpSm: { flex:"1 1 130px", padding:"9px 12px", border:"1px solid var(--border)", borderRadius:9, fontSize:14, background:"var(--ibg)", color:"var(--text)", outline:"none" },
+    btn:   c => ({ padding:"9px 16px", border:"1px solid var(--border)", borderRadius:9, background:"var(--bbg)", color:c||"var(--text)", fontSize:14, cursor:"pointer", fontWeight:500 }),
+    pill:  (c,a) => ({ padding:"5px 12px", borderRadius:20, border:a?`2px solid ${c}`:"1px solid var(--border)", background:a?c+"15":"var(--bbg)", color:a?c:"var(--text3)", fontSize:12, cursor:"pointer", fontWeight:a?600:400 }),
+    threadCard: { background:"var(--card)", border:"1px solid var(--border)", borderRadius:10, padding:"12px 14px", cursor:"pointer" },
   };
 
-  const UsernameBox=()=>!usernameSet?(
-    <div style={st.userBox}>
-      <div style={{fontSize:13,fontWeight:600,marginBottom:4,color:"var(--text)"}}>Ton prénom (optionnel)</div>
-      <div style={{display:"flex",gap:8}}>
-        <input style={{...st.input,flex:1}} value={username} onChange={e=>setUsername(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(localStorage.setItem("username",username.trim()||"Anonyme"),setUsernameSet(true))} placeholder="Ton prénom..."/>
-        <button style={st.btn()} onClick={()=>{localStorage.setItem("username",username.trim()||"Anonyme");setUsernameSet(true);}}>{username.trim()?"Confirmer":"Anonyme"}</button>
+  const myUser = usernameSet ? (username || "Anonyme") : null;
+
+  const UsernameBox = () => !usernameSet ? (
+    <div style={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12, padding:"1rem", marginBottom:"1rem" }}>
+      <div style={{ fontSize:13, fontWeight:600, marginBottom:4, color:"var(--text)" }}>Ton prénom pour rejoindre 👋</div>
+      <div style={{ display:"flex", gap:8 }}>
+        <input style={{...st.inp, flex:1}} value={username} onChange={e=>setUsername(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&(localStorage.setItem("username",username.trim()||"Anonyme"),setUsernameSet(true))}
+          placeholder="Ton prénom..."/>
+        <button style={st.btn()} onClick={()=>{localStorage.setItem("username",username.trim()||"Anonyme");setUsernameSet(true);}}>
+          {username.trim()?"Rejoindre":"Anonyme"}
+        </button>
       </div>
     </div>
-  ):null;
+  ) : null;
 
-  const ChatMessages=({msgs,endRef})=>(
-    <div style={st.chatBox}>
-      {msgs.length===0?<div style={{textAlign:"center",color:"var(--text3)",fontSize:14,margin:"auto"}}>Aucun message encore.</div>
-      :msgs.map(msg=>(
-        <div key={msg.id} style={{display:"flex",gap:10,alignItems:"flex-start",animation:"slideIn 0.3s ease"}}>
-          <Avatar name={msg.username}/>
-          <div style={{flex:1}}>
-            <div style={{display:"flex",gap:8,alignItems:"baseline",marginBottom:4}}>
-              <span style={{fontSize:13,fontWeight:600,color:"var(--text)"}}>{msg.username}</span>
-              <span style={{fontSize:11,color:"var(--text3)"}}>{msg.time}</span>
-            </div>
-            {msg.text&&<div style={st.bubble}>{msg.text}</div>}
-            {renderFile(msg.file_url,msg.file_name)}
-          </div>
+  // Thread chat UI (forum style)
+  const ThreadChatBox = () => {
+    const endRef = useRef(null);
+    const [thText, setThText] = useState("");
+    useEffect(() => { endRef.current?.scrollIntoView(); }, [threadMessages.length]);
+
+    async function send() {
+      if (!thText.trim()) return;
+      await sendThreadMessage(thText.trim());
+      setThText("");
+    }
+
+    return (
+      <div style={{ display:"flex", flexDirection:"column", height:"calc(100vh - 280px)", minHeight:360 }}>
+        <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:6, padding:"10px 0" }}>
+          {threadMessages.map((msg,i) => {
+            const prev = threadMessages[i-1];
+            return (
+              <div key={msg.id} style={{ marginTop: prev?.username===msg.username?1:8 }}>
+                <MsgBubble msg={msg} myUser={myUser} onLike={m=>likeMessage(m,"thread_messages")} />
+              </div>
+            );
+          })}
+          <TypingIndicator users={thTyping} />
+          <div ref={endRef}/>
         </div>
-      ))}
-      <div ref={endRef}/>
-    </div>
-  );
+        <div style={{ borderTop:"1px solid var(--border)", paddingTop:10 }}>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            <input style={{...st.inp,flex:1}} value={thText} onChange={e=>{setThText(e.target.value);setThTyping(e.target.value.length>0);}}
+              onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder="Ta réponse..."/>
+            <button style={{ width:36, height:36, borderRadius:"50%", border:"none", background:"linear-gradient(135deg,#6366f1,#8b5cf6)", cursor:"pointer", fontSize:15 }} onClick={send}>➤</button>
+            <button style={st.btn()} onClick={()=>threadFileRef.current.click()} disabled={uploading}>{uploading?"⏳":"📎"}</button>
+          </div>
+          <input type="file" ref={threadFileRef} style={{display:"none"}} accept="image/*,.pdf,.doc,.docx" onChange={e=>{if(e.target.files[0])handleThreadFile(e.target.files[0]);e.target.value="";}}/>
+        </div>
+      </div>
+    );
+  };
 
-  if(loading)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",color:"var(--text3)",fontSize:14,background:"var(--bg)"}}><ThemeStyle dark={dark}/>Chargement...</div>);
-  if(focusMode)return<><ThemeStyle dark={dark}/><FocusMode homework={homework} onExit={()=>setFocusMode(false)}/></>;
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",color:"var(--text3)",background:"var(--bg)"}}><ThemeStyle dark={dark}/>Chargement...</div>;
+  if (focusMode) return <><ThemeStyle dark={dark}/><FocusMode homework={homework} onExit={()=>setFocusMode(false)}/></>;
 
   const hour = new Date().getHours();
-  const autoReason = hour >= 20 || hour < 7 ? "nuit" : "jour";
 
-  return(
+  return (
     <div style={st.container}>
       <ThemeStyle dark={dark}/>
 
       {/* Header */}
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"0.5rem"}}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.5rem" }}>
         <div>
-          <h1 style={{margin:"0 0 4px",fontSize:20,fontWeight:600,color:"var(--text)"}}>📚 Mon Cahier de Devoirs</h1>
-          <p style={{margin:0,fontSize:13,color:"var(--text3)"}}>{totalPending>0?`${totalPending} devoir${totalPending>1?"s":""} en attente`:"Tout est à jour ✓"}</p>
+          <h1 style={{ margin:"0 0 3px", fontSize:20, fontWeight:700, color:"var(--text)" }}>📚 Mon Cahier de Devoirs</h1>
+          <p style={{ margin:0, fontSize:12, color:"var(--text3)" }}>{totalPending>0?`${totalPending} devoir${totalPending>1?"s":""} en attente`:"Tout est à jour ✓"}</p>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <button onClick={toggleDark} title={dark?"Mode clair":"Mode sombre"}
-            style={{padding:"8px 12px",borderRadius:10,border:"1px solid var(--border)",background:"var(--btn-bg)",cursor:"pointer",fontSize:18,lineHeight:1}}>
+        <div style={{ display:"flex", gap:8 }}>
+          <button onClick={toggleDark} style={{ width:36, height:36, borderRadius:"50%", border:"1px solid var(--border)", background:"var(--bbg)", cursor:"pointer", fontSize:16 }}>
             {dark?"☀️":"🌙"}
           </button>
-          <button onClick={()=>setFocusMode(true)} style={{padding:"8px 16px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#667eea,#764ba2)",color:"#fff",fontWeight:600,cursor:"pointer",fontSize:13}}>
+          <button onClick={()=>setFocusMode(true)} style={{ padding:"8px 14px", borderRadius:10, border:"none", background:"linear-gradient(135deg,#667eea,#764ba2)", color:"#fff", fontWeight:600, cursor:"pointer", fontSize:13 }}>
             🎯 Focus
           </button>
         </div>
       </div>
-      <div style={{fontSize:11,color:"var(--text3)",textAlign:"right",marginBottom:"0.75rem"}}>
-        {dark?"🌙":"☀️"} Mode {dark?"sombre":"clair"} — automatique ({autoReason}) ·{" "}
-        <span style={{cursor:"pointer",textDecoration:"underline",color:"var(--text2)"}} onClick={toggleDark}>forcer</span>
+      <div style={{ fontSize:10, color:"var(--text3)", textAlign:"right", marginBottom:"0.6rem" }}>
+        {dark?"🌙 nuit":"☀️ jour"} · <span style={{ cursor:"pointer", textDecoration:"underline" }} onClick={toggleDark}>forcer</span>
       </div>
 
       <Countdown dark={dark}/>
 
+      {/* Tabs */}
       <div style={st.tabs}>
-        <button style={st.tab(tab==="devoirs")} onClick={()=>{setTab("devoirs");setSelectedSubject(null);}}>Devoirs {totalPending>0&&`· ${totalPending}`}</button>
-        <button style={st.tab(tab==="partage")} onClick={()=>{setTab("partage");setSelectedThread(null);}}>💬 Espace partagé</button>
-        <button style={st.tab(tab==="forums")} onClick={()=>{setTab("forums");setSelectedThread(null);setThreadSubject(null);}}>🗂️ Forums</button>
+        <button style={st.tab(tab==="devoirs")} onClick={()=>{setTab("devoirs");setSub(null);}}>Devoirs {totalPending>0&&`· ${totalPending}`}</button>
+        <button style={st.tab(tab==="partage")} onClick={()=>setTab("partage")}>
+          💬 Espace partagé {chatOnline.length>0&&<span style={{marginLeft:4,fontSize:10,color:"#22c55e"}}>● {chatOnline.length}</span>}
+        </button>
+        <button style={st.tab(tab==="forums")} onClick={()=>{setTab("forums");setSelThread(null);setThreadSubject(null);}}>🗂️ Forums</button>
       </div>
 
       {/* ── DEVOIRS ── */}
       {tab==="devoirs"&&!selectedSubject&&(
-        <div className="fade-in" style={st.grid}>
-          {SUBJECTS.map(sub=>{const p=pending(sub.id);const first=hwForSubject(sub.id).filter(h=>!h.done)[0];return(
-            <div key={sub.id} className="card-hover" style={st.card(sub.color,p>0)} onClick={()=>setSelectedSubject(sub.id)}>
-              <div style={{fontSize:28,marginBottom:8}}>{sub.icon}</div>
-              <div style={{fontSize:14,fontWeight:600,color:"var(--text)"}}>{sub.name}</div>
-              <div style={st.badge(sub.color,p>0)}>{p>0?`${p} à faire`:"Rien à faire ✓"}</div>
-              {first&&<div style={{marginTop:8,fontSize:11,color:"var(--text3)",borderLeft:`2px solid ${sub.color}`,paddingLeft:6,lineHeight:1.4}}>{first.text.slice(0,55)}{first.text.length>55?"…":""}</div>}
-            </div>
-          );})}
+        <div className="fade-up" style={st.grid}>
+          {SUBJECTS.map(sub=>{
+            const p=pending(sub.id);const first=hwFor(sub.id).filter(h=>!h.done)[0];
+            return(
+              <div key={sub.id} className="card-lift" style={st.card(sub.color,p>0)} onClick={()=>setSub(sub.id)}>
+                <div style={{fontSize:26,marginBottom:8}}>{sub.icon}</div>
+                <div style={{fontSize:14,fontWeight:600,color:"var(--text)"}}>{sub.name}</div>
+                <div style={st.badge(sub.color,p>0)}>{p>0?`${p} à faire`:"Rien ✓"}</div>
+                {first&&<div style={{marginTop:8,fontSize:11,color:"var(--text3)",borderLeft:`2px solid ${sub.color}`,paddingLeft:6,lineHeight:1.4}}>{first.text.slice(0,50)}{first.text.length>50?"…":""}</div>}
+              </div>
+            );
+          })}
         </div>
       )}
 
       {tab==="devoirs"&&subject&&(
-        <div className="fade-in">
-          <button style={st.backBtn} onClick={()=>setSelectedSubject(null)}>← Toutes les matières</button>
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:"1.5rem"}}>
-            <span style={{fontSize:32}}>{subject.icon}</span>
-            <div><h2 style={{margin:0,fontSize:18,fontWeight:600,color:"var(--text)"}}>{subject.name}</h2><span style={{fontSize:12,color:subject.color}}>{pending(subject.id)} devoir{pending(subject.id)!==1?"s":""} en attente</span></div>
+        <div className="fade-up">
+          <button style={st.back} onClick={()=>setSub(null)}>← Toutes les matières</button>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:"1.25rem"}}>
+            <span style={{fontSize:30}}>{subject.icon}</span>
+            <div>
+              <h2 style={{margin:0,fontSize:17,fontWeight:700,color:"var(--text)"}}>{subject.name}</h2>
+              <span style={{fontSize:12,color:subject.color}}>{pending(subject.id)} devoir{pending(subject.id)!==1?"s":""} en attente</span>
+            </div>
           </div>
-          <div style={st.formBox}>
-            <div style={{fontSize:12,color:"var(--text3)",marginBottom:4}}>Ajouter un devoir</div>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:10}}>
-              <input style={st.input} value={newHW.text} onChange={e=>setNewHW(p=>({...p,text:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addHomework()} placeholder="Ex : Ex 12 p.47, rédaction..."/>
-              <input type="date" style={st.inputSm} value={newHW.date} onChange={e=>setNewHW(p=>({...p,date:e.target.value}))}/>
+          <div style={st.form}>
+            <div style={{fontSize:12,color:"var(--text3)",marginBottom:8}}>Ajouter un devoir partagé</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <input style={st.inp} value={newHW.text} onChange={e=>setNewHW(p=>({...p,text:e.target.value}))} onKeyDown={e=>e.key==="Enter"&&addHomework()} placeholder="Ex : Ex 12 p.47, rédaction..."/>
+              <input type="date" style={st.inpSm} value={newHW.date} onChange={e=>setNewHW(p=>({...p,date:e.target.value}))}/>
               <button style={st.btn(subject.color)} onClick={addHomework}>Ajouter</button>
             </div>
           </div>
-          {hwForSubject(subject.id).length===0
-            ?<div style={{textAlign:"center",color:"var(--text3)",fontSize:14,padding:"2rem 0"}}>Aucun devoir pour cette matière 🎉</div>
-            :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {[...hwForSubject(subject.id).filter(h=>!h.done),...hwForSubject(subject.id).filter(h=>h.done)].map(item=>(
-                <HwItem key={item.id} item={item} subject={subject} onToggle={toggleDone} onDelete={deleteHW}/>
+          {hwFor(subject.id).length===0?(
+            <div style={{textAlign:"center",color:"var(--text3)",fontSize:14,padding:"2rem 0"}}>Aucun devoir 🎉</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {[...hwFor(subject.id).filter(h=>!h.done),...hwFor(subject.id).filter(h=>h.done)].map(item=>(
+                <HwItem key={item.id} item={item} subject={subject} myUser={myUser} onToggle={toggleDone} onDelete={deleteHW}/>
               ))}
-            </div>}
-          <MentoratBadge subjectId={subject.id} username={username||"Anonyme"}/>
+            </div>
+          )}
         </div>
       )}
 
-      {/* ── ESPACE PARTAGÉ ── */}
+      {/* ── ESPACE PARTAGÉ (Social) ── */}
       {tab==="partage"&&(
-        <div className="fade-in">
+        <div className="fade-up">
           <UsernameBox/>
-          <ChatMessages msgs={messages} endRef={messagesEndRef}/>
-          <div style={{display:"flex",gap:8}}>
-            <input style={{...st.input,flex:1}} value={newMsg} onChange={e=>setNewMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendMessage()} placeholder={usernameSet?`Écris un message en tant que ${username||"Anonyme"}…`:"Écris ton message…"}/>
-            <button style={st.btn("#3B82F6")} onClick={()=>sendMessage()}>Envoyer</button>
-            <button style={st.uploadBtn} onClick={()=>fileInputRef.current.click()} disabled={uploading}>{uploading?"⏳":"📎"}</button>
-            <input type="file" ref={fileInputRef} style={{display:"none"}} accept="image/*,.pdf,.doc,.docx" onChange={e=>handleFileUpload(e,false)}/>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",marginTop:8}}>
-            <div style={{fontSize:11,color:"var(--text3)"}}>📎 pour envoyer une photo ou un fichier</div>
-            {usernameSet&&<button style={{fontSize:11,padding:"3px 8px",border:"1px solid var(--border)",borderRadius:6,cursor:"pointer",background:"var(--btn-bg)",color:"var(--text2)"}} onClick={()=>setUsernameSet(false)}>Changer de nom</button>}
-          </div>
+          <SocialChat
+            messages={messages}
+            myUser={myUser}
+            onSend={sendMainMessage}
+            onLike={m=>likeMessage(m,"messages")}
+            onFileUpload={handleMainFile}
+            typingUsers={chatTyping}
+            onlineUsers={chatOnline}
+            uploading={uploading}
+          />
+          {usernameSet && (
+            <div style={{textAlign:"right",marginTop:6}}>
+              <button style={{fontSize:11,padding:"3px 8px",border:"1px solid var(--border)",borderRadius:6,cursor:"pointer",background:"var(--bbg)",color:"var(--text2)"}} onClick={()=>setUsernameSet(false)}>Changer de nom</button>
+            </div>
+          )}
         </div>
       )}
 
       {/* ── FORUMS ── */}
       {tab==="forums"&&!selectedThread&&(
-        <div className="fade-in">
+        <div className="fade-up">
           <UsernameBox/>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:"1rem"}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:"1rem"}}>
             <button style={st.pill("#6b7280",threadSubject===null)} onClick={()=>setThreadSubject(null)}>Toutes</button>
             {SUBJECTS.map(sub=><button key={sub.id} style={st.pill(sub.color,threadSubject===sub.id)} onClick={()=>setThreadSubject(sub.id)}>{sub.icon} {sub.name}</button>)}
           </div>
           <div style={{marginBottom:"1rem"}}>
             {!showNewThread
-              ?<button style={{...st.btn("#3B82F6"),width:"100%",textAlign:"center"}} onClick={()=>setShowNewThread(true)}>+ Créer un fil de discussion</button>
-              :<div style={st.formBox}>
+              ?<button style={{...st.btn("#6366f1"),width:"100%",textAlign:"center"}} onClick={()=>setShowNewThread(true)}>+ Créer un fil de discussion</button>
+              :<div style={st.form}>
                 <div style={{fontSize:12,color:"var(--text3)",marginBottom:8}}>Nouveau fil</div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  <select style={{...st.inputSm,flex:"1 1 140px"}} value={threadSubject||""} onChange={e=>setThreadSubject(e.target.value||null)}>
+                  <select style={{...st.inpSm,flex:"1 1 140px"}} value={threadSubject||""} onChange={e=>setThreadSubject(e.target.value||null)}>
                     <option value="">Choisir une matière...</option>
                     {SUBJECTS.map(sub=><option key={sub.id} value={sub.id}>{sub.icon} {sub.name}</option>)}
                   </select>
-                  <input style={st.input} value={newThreadTitle} onChange={e=>setNewThreadTitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createThread()} placeholder="Titre du fil..."/>
-                  <button style={st.btn("#3B82F6")} onClick={createThread}>Créer</button>
+                  <input style={st.inp} value={newThreadTitle} onChange={e=>setNewThreadTitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&createThread()} placeholder="Titre du fil..."/>
+                  <button style={st.btn("#6366f1")} onClick={createThread}>Créer</button>
                   <button style={st.btn()} onClick={()=>setShowNewThread(false)}>Annuler</button>
                 </div>
               </div>}
           </div>
-          {(threadSubject?threadsForSubject(threadSubject):threads).length===0
-            ?<div style={{textAlign:"center",color:"var(--text3)",fontSize:14,padding:"2rem 0"}}>Aucun fil encore. Crée le premier !</div>
-            :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {(threadSubject?threadsForSubject(threadSubject):threads).map(thread=>{
+          {(threadSubject?threadsFor(threadSubject):threads).length===0?(
+            <div style={{textAlign:"center",color:"var(--text3)",fontSize:14,padding:"2rem 0"}}>Aucun fil encore.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {(threadSubject?threadsFor(threadSubject):threads).map(thread=>{
                 const sub=SUBJECTS.find(s=>s.id===thread.subject_id);
-                return(<div key={thread.id} className="card-hover" style={st.threadCard} onClick={()=>openThread(thread)}>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <span style={{fontSize:22}}>{sub?.icon||"💬"}</span>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:14,fontWeight:600,color:"var(--text)"}}>{thread.title}</div>
-                      <div style={{fontSize:11,color:"var(--text3)",marginTop:2}}>{sub?.name} · par {thread.created_by} · {new Date(thread.created_at).toLocaleDateString("fr-FR")}</div>
+                return(
+                  <div key={thread.id} className="card-lift" style={st.threadCard} onClick={()=>openThread(thread)}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{fontSize:20}}>{sub?.icon||"💬"}</span>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:14,fontWeight:600,color:"var(--text)"}}>{thread.title}</div>
+                        <div style={{fontSize:11,color:"var(--text3)",marginTop:1}}>{sub?.name} · {thread.created_by} · {new Date(thread.created_at).toLocaleDateString("fr-FR")}</div>
+                      </div>
+                      <span style={{color:"var(--text3)",fontSize:14}}>→</span>
                     </div>
-                    <span style={{color:"var(--text3)"}}>→</span>
                   </div>
-                </div>);
+                );
               })}
-            </div>}
+            </div>
+          )}
         </div>
       )}
 
       {tab==="forums"&&selectedThread&&(
-        <div className="fade-in">
-          <button style={st.backBtn} onClick={()=>{setSelectedThread(null);setThreadMessages([]);}}>← Retour aux fils</button>
-          {(()=>{const sub=SUBJECTS.find(s=>s.id===selectedThread.subject_id);return(
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:"1rem"}}>
-              <span style={{fontSize:28}}>{sub?.icon}</span>
-              <div><h2 style={{margin:0,fontSize:17,fontWeight:600,color:"var(--text)"}}>{selectedThread.title}</h2><span style={{fontSize:12,color:"var(--text3)"}}>{sub?.name} · par {selectedThread.created_by}</span></div>
-            </div>
-          );})()}
-          <ChatMessages msgs={threadMessages} endRef={threadEndRef}/>
-          <div style={{display:"flex",gap:8}}>
-            <input style={{...st.input,flex:1}} value={newThreadMsg} onChange={e=>setNewThreadMsg(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendThreadMessage()} placeholder={usernameSet?`Réponds en tant que ${username||"Anonyme"}…`:"Écris ta réponse…"}/>
-            <button style={st.btn("#3B82F6")} onClick={()=>sendThreadMessage()}>Envoyer</button>
-            <button style={st.uploadBtn} onClick={()=>threadFileRef.current.click()} disabled={uploading}>{uploading?"⏳":"📎"}</button>
-            <input type="file" ref={threadFileRef} style={{display:"none"}} accept="image/*,.pdf,.doc,.docx" onChange={e=>handleFileUpload(e,true)}/>
-          </div>
-          <div style={{fontSize:11,color:"var(--text3)",marginTop:6}}>📎 pour envoyer une photo ou un fichier</div>
+        <div className="fade-up">
+          <button style={st.back} onClick={()=>{setSelThread(null);setThreadMsgs([]);}}>← Retour aux fils</button>
+          {(()=>{
+            const sub=SUBJECTS.find(s=>s.id===selectedThread.subject_id);
+            return(
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:"0.75rem",padding:"10px 14px",background:"var(--card)",borderRadius:12,border:"1px solid var(--border)"}}>
+                <span style={{fontSize:24}}>{sub?.icon}</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:15,fontWeight:700,color:"var(--text)"}}>{selectedThread.title}</div>
+                  <div style={{fontSize:11,color:"var(--text3)"}}>{sub?.name} · {selectedThread.created_by}
+                    {thOnline.length>0&&<span style={{color:"#22c55e",marginLeft:8}}>● {thOnline.length} en ligne</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          <ThreadChatBox/>
         </div>
       )}
     </div>
