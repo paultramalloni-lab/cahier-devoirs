@@ -41,6 +41,179 @@ function useDarkMode() {
   return [dark, toggle];
 }
 
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+const NOTIF_TYPES = [
+  { key:"newHomework",   icon:"📚", label:"Nouveau devoir ajouté" },
+  { key:"chatMessage",   icon:"💬", label:"Message dans l'espace partagé" },
+  { key:"helpRequest",   icon:"🆘", label:"Quelqu'un demande de l'aide" },
+  { key:"threadReply",   icon:"🗂️", label:"Réponse dans un fil de discussion" },
+];
+
+function useNotifications(myUser) {
+  const [permission, setPermission] = useState(() => {
+    try { return Notification.permission; } catch { return "denied"; }
+  });
+  const [prefs, setPrefs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("notifPrefs")) || { newHomework:true, chatMessage:true, helpRequest:true, threadReply:true }; }
+    catch { return { newHomework:true, chatMessage:true, helpRequest:true, threadReply:true }; }
+  });
+  // Threads spécifiques abonnés (par id)
+  const [watchedThreads, setWatchedThreads] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("watchedThreads")) || []; } catch { return []; }
+  });
+  const [inbox, setInbox]   = useState([]);
+  const [unread, setUnread] = useState(0);
+
+  async function requestPermission() {
+    try {
+      const r = await Notification.requestPermission();
+      setPermission(r);
+      return r;
+    } catch { return "denied"; }
+  }
+
+  const notify = useCallback((type, title, body) => {
+    if (!prefs[type]) return;
+    // Toast in-app
+    const n = { id: Date.now() + Math.random(), type, title, body, time: new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), read:false };
+    setInbox(prev => [n,...prev].slice(0,60));
+    setUnread(u => u+1);
+    // Browser notif quand l'onglet est en arrière-plan
+    if (permission === "granted" && document.hidden) {
+      try { new Notification(title, { body, icon:"/favicon.ico" }); } catch {}
+    }
+  }, [prefs, permission]);
+
+  function notifyThread(threadId, title, body) {
+    if (!prefs.threadReply) return;
+    if (!watchedThreads.includes(threadId)) return;
+    notify("threadReply", title, body);
+  }
+
+  function watchThread(id) {
+    const updated = watchedThreads.includes(id) ? watchedThreads.filter(x=>x!==id) : [...watchedThreads, id];
+    setWatchedThreads(updated);
+    localStorage.setItem("watchedThreads", JSON.stringify(updated));
+  }
+
+  function isWatching(id) { return watchedThreads.includes(id); }
+
+  function markAllRead() { setUnread(0); setInbox(p=>p.map(n=>({...n,read:true}))); }
+  function clearAll()    { setInbox([]); setUnread(0); }
+
+  function updatePref(key, val) {
+    const updated = {...prefs,[key]:val};
+    setPrefs(updated);
+    localStorage.setItem("notifPrefs", JSON.stringify(updated));
+  }
+
+  return { permission, requestPermission, prefs, updatePref, notify, notifyThread, watchThread, isWatching, inbox, unread, markAllRead, clearAll };
+}
+
+// ─── TOAST NOTIFICATION ───────────────────────────────────────────────────────
+function ToastContainer({ toasts, onDismiss }) {
+  return (
+    <div style={{ position:"fixed", bottom:20, right:16, zIndex:9999, display:"flex", flexDirection:"column", gap:8, maxWidth:320, pointerEvents:"none" }}>
+      {toasts.map(t => (
+        <div key={t.id} style={{ background:"var(--card)", border:"1px solid var(--border)", borderRadius:12, padding:"10px 14px", boxShadow:"0 4px 20px rgba(0,0,0,0.18)", display:"flex", gap:10, alignItems:"flex-start", animation:"slideInRight 0.3s ease", pointerEvents:"all" }}>
+          <span style={{ fontSize:18, flexShrink:0 }}>{NOTIF_TYPES.find(n=>n.key===t.type)?.icon||"🔔"}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontSize:13, fontWeight:600, color:"var(--text)", marginBottom:2 }}>{t.title}</div>
+            <div style={{ fontSize:12, color:"var(--text2)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.body}</div>
+          </div>
+          <button onClick={()=>onDismiss(t.id)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--text3)", fontSize:14, padding:0, flexShrink:0 }}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── NOTIFICATION BELL ────────────────────────────────────────────────────────
+function NotificationBell({ unread, inbox, onMarkRead, onClear, prefs, updatePref, permission, onRequestPermission }) {
+  const [open, setOpen]         = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  function handleOpen() {
+    setOpen(o => !o);
+    if (!open) onMarkRead();
+  }
+
+  const iconForType = key => NOTIF_TYPES.find(n=>n.key===key)?.icon||"🔔";
+
+  return (
+    <div ref={ref} style={{ position:"relative" }}>
+      <button onClick={handleOpen} style={{ position:"relative", width:38, height:38, borderRadius:"50%", border:"1px solid var(--border)", background:"var(--bbg)", cursor:"pointer", fontSize:17, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        🔔
+        {unread > 0 && (
+          <span style={{ position:"absolute", top:2, right:2, width:16, height:16, borderRadius:"50%", background:"#ef4444", color:"#fff", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", border:"2px solid var(--bg)" }}>
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ position:"absolute", right:0, top:46, width:320, background:"var(--card)", border:"1px solid var(--border)", borderRadius:16, boxShadow:"0 8px 32px rgba(0,0,0,0.18)", zIndex:1000, animation:"fadeUp 0.2s ease", overflow:"hidden" }}>
+          {/* Header */}
+          <div style={{ padding:"12px 16px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+            <span style={{ fontSize:14, fontWeight:700, color:"var(--text)" }}>🔔 Notifications</span>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={()=>setShowSettings(s=>!s)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:13, color:"var(--text3)" }} title="Paramètres">⚙️</button>
+              {inbox.length > 0 && <button onClick={onClear} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"var(--text3)" }}>Tout effacer</button>}
+            </div>
+          </div>
+
+          {/* Settings panel */}
+          {showSettings && (
+            <div style={{ padding:"12px 16px", borderBottom:"1px solid var(--border)", background:"var(--bg3)", animation:"fadeUp 0.15s ease" }}>
+              <div style={{ fontSize:12, fontWeight:600, color:"var(--text2)", marginBottom:10 }}>Recevoir des notifications pour :</div>
+              {NOTIF_TYPES.map(t => (
+                <label key={t.key} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8, cursor:"pointer" }}>
+                  <span style={{ fontSize:13, color:"var(--text)" }}>{t.icon} {t.label}</span>
+                  <input type="checkbox" checked={prefs[t.key]} onChange={e=>updatePref(t.key,e.target.checked)} style={{ width:16, height:16, cursor:"pointer", accentColor:"#6366f1" }}/>
+                </label>
+              ))}
+              {permission !== "granted" && (
+                <button onClick={onRequestPermission} style={{ width:"100%", padding:"8px", borderRadius:8, border:"none", background:"linear-gradient(135deg,#6366f1,#8b5cf6)", color:"#fff", fontSize:12, fontWeight:600, cursor:"pointer", marginTop:4 }}>
+                  Activer les notifications navigateur
+                </button>
+              )}
+              {permission === "granted" && <div style={{ fontSize:11, color:"#22c55e", marginTop:4 }}>✅ Notifications navigateur activées</div>}
+              {permission === "denied"  && <div style={{ fontSize:11, color:"#ef4444", marginTop:4 }}>❌ Bloquées — autorise dans les paramètres du navigateur</div>}
+            </div>
+          )}
+
+          {/* Inbox */}
+          <div style={{ maxHeight:340, overflowY:"auto" }}>
+            {inbox.length === 0 ? (
+              <div style={{ padding:"2rem 1rem", textAlign:"center", color:"var(--text3)", fontSize:13 }}>
+                <div style={{ fontSize:32, marginBottom:8 }}>🔕</div>
+                Aucune notification
+              </div>
+            ) : inbox.map(n => (
+              <div key={n.id} style={{ padding:"10px 16px", borderBottom:"1px solid var(--border)", background: n.read ? "transparent" : "var(--bg3)", display:"flex", gap:10, alignItems:"flex-start" }}>
+                <span style={{ fontSize:18, flexShrink:0 }}>{iconForType(n.type)}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:"var(--text)" }}>{n.title}</div>
+                  <div style={{ fontSize:12, color:"var(--text2)", marginTop:1, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{n.body}</div>
+                  <div style={{ fontSize:10, color:"var(--text3)", marginTop:2 }}>{n.time}</div>
+                </div>
+                {!n.read && <div style={{ width:8, height:8, borderRadius:"50%", background:"#6366f1", flexShrink:0, marginTop:4 }}/>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── GHOST TYPING HOOK ────────────────────────────────────────────────────────
 function useTypingPresence(channelName, myUser) {
   const [typingUsers, setTypingUsers] = useState([]);
@@ -111,6 +284,7 @@ function ThemeStyle({ dark }) {
     .card-lift{transition:transform 0.18s,box-shadow 0.18s!important;}
     .card-lift:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.1)!important;}
     ::-webkit-scrollbar{width:5px;}::-webkit-scrollbar-track{background:transparent;}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px;}
+    @keyframes slideInRight{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
   `;
   return <style>{v + a}</style>;
 }
@@ -555,6 +729,18 @@ export default function App() {
   const threadEndRef  = useRef(null);
   const threadFileRef = useRef(null);
 
+  // ── Notifications ──
+  const notif = useNotifications(username || "Anonyme");
+  const [toasts, setToasts] = useState([]);
+
+  function pushToast(type, title, body) {
+    notif.notify(type, title, body);
+    const id = Date.now() + Math.random();
+    setToasts(p => [...p, { id, type, title, body }]);
+    setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4500);
+  }
+  function dismissToast(id) { setToasts(p => p.filter(t => t.id !== id)); }
+
   // Ghost typing for main chat
   const [chatTyping, chatOnline, setChatTyping] = useTypingPresence("presence-chat", usernameSet ? username : null);
   // Ghost typing for current thread
@@ -564,23 +750,55 @@ export default function App() {
   useEffect(() => { loadAll(); }, []);
   useEffect(() => {
     const ch = supabase.channel("rt-messages")
-      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"}, p => setMessages(prev=>[...prev,p.new]))
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"}, p => {
+        setMessages(prev=>[...prev,p.new]);
+        if (p.new.username !== (username || "Anonyme")) {
+          pushToast("chatMessage", `💬 ${p.new.username}`, p.new.text?.slice(0,60) || "a envoyé un fichier");
+        }
+      })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"messages"}, p => setMessages(prev=>prev.map(m=>m.id===p.new.id?p.new:m)))
       .subscribe();
     return () => supabase.removeChannel(ch);
-  }, []);
+  }, [username]);
   useEffect(() => {
     if (!selectedThread) return;
     const ch = supabase.channel("rt-thread-msgs")
-      .on("postgres_changes",{event:"INSERT",schema:"public",table:"thread_messages"}, p => { if(p.new.thread_id===selectedThread.id) setThreadMsgs(prev=>[...prev,p.new]); })
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"thread_messages"}, p => {
+        if(p.new.thread_id===selectedThread.id) {
+          setThreadMsgs(prev=>[...prev,p.new]);
+          if (p.new.username !== (username || "Anonyme")) {
+            notif.notifyThread(selectedThread.id, `🗂️ ${p.new.username}`, `dans "${selectedThread.title}" : ${p.new.text?.slice(0,50)||"fichier"}`);
+          }
+        }
+      })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"thread_messages"}, p => setThreadMsgs(prev=>prev.map(m=>m.id===p.new.id?p.new:m)))
       .subscribe();
     return () => supabase.removeChannel(ch);
-  }, [selectedThread]);
+  }, [selectedThread, username]);
   useEffect(() => {
-    const ch = supabase.channel("rt-devoirs").on("postgres_changes",{event:"*",schema:"public",table:"devoirs"},()=>loadHomework()).subscribe();
+    const ch = supabase.channel("rt-devoirs")
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"devoirs"}, p => {
+        loadHomework();
+        if (p.new.added_by !== (username || "Anonyme")) {
+          const sub = SUBJECTS.find(s=>s.id===p.new.subject_id);
+          pushToast("newHomework", `📚 Nouveau devoir — ${sub?.name||p.new.subject_id}`, p.new.text?.slice(0,70));
+        }
+      })
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"},()=>loadHomework())
+      .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"},()=>loadHomework())
+      .subscribe();
     return () => supabase.removeChannel(ch);
-  }, []);
+  }, [username]);
+  useEffect(() => {
+    const ch = supabase.channel("rt-task-help")
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"task_help"}, p => {
+        if (p.new.status === "aide" && p.new.username !== (username || "Anonyme")) {
+          pushToast("helpRequest", `🆘 ${p.new.username} a besoin d'aide`, "Cliquez pour voir quelle tâche");
+        }
+      })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [username]);
 
   async function loadAll() { await Promise.all([loadHomework(), loadMessages(), loadThreads()]); setLoading(false); }
   async function loadHomework() { const{data}=await supabase.from("devoirs").select("*").order("created_at"); if(data)setHomework(data); }
@@ -734,13 +952,26 @@ export default function App() {
     <div style={st.container}>
       <ThemeStyle dark={dark}/>
 
+      {/* Toast container */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast}/>
+
       {/* Header */}
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"0.5rem" }}>
         <div>
           <h1 style={{ margin:"0 0 3px", fontSize:20, fontWeight:700, color:"var(--text)" }}>📚 Mon Cahier de Devoirs</h1>
           <p style={{ margin:0, fontSize:12, color:"var(--text3)" }}>{totalPending>0?`${totalPending} devoir${totalPending>1?"s":""} en attente`:"Tout est à jour ✓"}</p>
         </div>
-        <div style={{ display:"flex", gap:8 }}>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <NotificationBell
+            unread={notif.unread}
+            inbox={notif.inbox}
+            onMarkRead={notif.markAllRead}
+            onClear={notif.clearAll}
+            prefs={notif.prefs}
+            updatePref={notif.updatePref}
+            permission={notif.permission}
+            onRequestPermission={notif.requestPermission}
+          />
           <button onClick={toggleDark} style={{ width:36, height:36, borderRadius:"50%", border:"1px solid var(--border)", background:"var(--bbg)", cursor:"pointer", fontSize:16 }}>
             {dark?"☀️":"🌙"}
           </button>
@@ -895,6 +1126,11 @@ export default function App() {
                     {thOnline.length>0&&<span style={{color:"#22c55e",marginLeft:8}}>● {thOnline.length} en ligne</span>}
                   </div>
                 </div>
+                <button onClick={()=>notif.watchThread(selectedThread.id)}
+                  title={notif.isWatching(selectedThread.id)?"Ne plus suivre ce fil":"Suivre ce fil"}
+                  style={{ padding:"5px 10px", borderRadius:20, border:`1px solid ${notif.isWatching(selectedThread.id)?"#6366f1":"var(--border)"}`, background:notif.isWatching(selectedThread.id)?"#6366f120":"var(--bbg)", color:notif.isWatching(selectedThread.id)?"#6366f1":"var(--text3)", fontSize:11, cursor:"pointer", fontWeight:600, flexShrink:0 }}>
+                  {notif.isWatching(selectedThread.id)?"🔔 Suivi":"🔕 Suivre"}
+                </button>
               </div>
             );
           })()}
