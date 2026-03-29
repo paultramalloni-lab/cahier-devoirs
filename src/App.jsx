@@ -603,8 +603,8 @@ function HwItem({ item, subject, myUser, onToggle, onDelete }) {
   function handleToggle() {
     if (!item.done) {
       setRemoving(true);
-      setTimeout(() => { onToggle(item.id, item.done); setRemoving(false); }, 320);
-    } else onToggle(item.id, item.done);
+      setTimeout(() => { onToggle(); setRemoving(false); }, 320);
+    } else onToggle();
   }
 
   return (
@@ -808,7 +808,6 @@ export default function App() {
           pushToast("newHomework", `📚 Nouveau devoir — ${sub?.name||p.new.subject_id}`, p.new.text?.slice(0,70));
         }
       })
-      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"},()=>loadHomework())
       .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"},()=>loadHomework())
       .subscribe();
     return () => supabase.removeChannel(ch);
@@ -836,7 +835,18 @@ export default function App() {
     await supabase.from("devoirs").insert({subject_id:selectedSubject,text:newHW.text.trim(),date:newHW.date||null,done:false,added_by:username.trim()||"Anonyme"});
     setNewHW({text:"",date:""});
   }
-  async function toggleDone(id,done) { await supabase.from("devoirs").update({done:!done}).eq("id",id); setHomework(prev=>prev.map(h=>h.id===id?{...h,done:!done}:h)); }
+  // ── Done personnel : stocké en localStorage, pas dans Supabase ──
+  const [personalDone, setPersonalDone] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("personalDone")) || {}; } catch { return {}; }
+  });
+  function toggleDone(id) {
+    setPersonalDone(prev => {
+      const updated = { ...prev, [id]: !prev[id] };
+      localStorage.setItem("personalDone", JSON.stringify(updated));
+      return updated;
+    });
+  }
+  function isDone(id) { return !!personalDone[id]; }
   async function deleteHW(id) { await supabase.from("devoirs").delete().eq("id",id); setHomework(prev=>prev.filter(h=>h.id!==id)); }
 
   async function likeMessage(msg, table="messages") {
@@ -890,7 +900,7 @@ export default function App() {
   }
 
   const hwFor    = id => homework.filter(h=>h.subject_id===id);
-  const pending  = id => hwFor(id).filter(h=>!h.done).length;
+  const pending  = id => hwFor(id).filter(h=>!isDone(h.id)).length;
   const totalPending = SUBJECTS.reduce((a,s)=>a+pending(s.id),0);
   const subject  = SUBJECTS.find(s=>s.id===selectedSubject);
   const threadsFor = id => threads.filter(t=>t.subject_id===id);
@@ -1058,8 +1068,8 @@ export default function App() {
             <div style={{textAlign:"center",color:"var(--text3)",fontSize:14,padding:"2rem 0"}}>Aucun devoir 🎉</div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {[...hwFor(subject.id).filter(h=>!h.done),...hwFor(subject.id).filter(h=>h.done)].map(item=>(
-                <HwItem key={item.id} item={item} subject={subject} myUser={myUser} onToggle={toggleDone} onDelete={deleteHW}/>
+              {[...hwFor(subject.id).filter(h=>!isDone(h.id)),...hwFor(subject.id).filter(h=>isDone(h.id))].map(item=>(
+                <HwItem key={item.id} item={{...item, done: isDone(item.id)}} subject={subject} myUser={myUser} onToggle={()=>toggleDone(item.id)} onDelete={deleteHW}/>
               ))}
             </div>
           )}
