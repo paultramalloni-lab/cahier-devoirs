@@ -53,16 +53,25 @@ function useNotifications(myUser) {
   const [permission, setPermission] = useState(() => {
     try { return Notification.permission; } catch { return "denied"; }
   });
+  const [swReg, setSwReg] = useState(null);
   const [prefs, setPrefs] = useState(() => {
     try { return JSON.parse(localStorage.getItem("notifPrefs")) || { newHomework:true, chatMessage:true, helpRequest:true, threadReply:true }; }
     catch { return { newHomework:true, chatMessage:true, helpRequest:true, threadReply:true }; }
   });
-  // Threads spécifiques abonnés (par id)
   const [watchedThreads, setWatchedThreads] = useState(() => {
     try { return JSON.parse(localStorage.getItem("watchedThreads")) || []; } catch { return []; }
   });
   const [inbox, setInbox]   = useState([]);
   const [unread, setUnread] = useState(0);
+
+  // Enregistre le Service Worker au démarrage
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js")
+        .then(reg => setSwReg(reg))
+        .catch(() => {});
+    }
+  }, []);
 
   async function requestPermission() {
     try {
@@ -72,17 +81,32 @@ function useNotifications(myUser) {
     } catch { return "denied"; }
   }
 
+  // Envoie la notif au Service Worker (fonctionne onglet caché ET onglet fermé si SW actif)
+  function pushViaServiceWorker(title, body) {
+    if (!swReg) return;
+    if (swReg.active) {
+      swReg.active.postMessage({ type: "NOTIFY", title, body });
+    }
+  }
+
   const notify = useCallback((type, title, body) => {
     if (!prefs[type]) return;
     // Toast in-app
     const n = { id: Date.now() + Math.random(), type, title, body, time: new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), read:false };
     setInbox(prev => [n,...prev].slice(0,60));
     setUnread(u => u+1);
-    // Browser notif quand l'onglet est en arrière-plan
-    if (permission === "granted" && document.hidden) {
-      try { new Notification(title, { body, icon:"/favicon.ico" }); } catch {}
+    // Notification navigateur via Service Worker (marche même onglet en arrière-plan)
+    if (permission === "granted") {
+      if (document.hidden) {
+        // Essaie d'abord via SW (plus fiable)
+        if (swReg?.active) {
+          swReg.active.postMessage({ type: "NOTIFY", title, body });
+        } else {
+          try { new Notification(title, { body, icon:"/favicon.svg" }); } catch {}
+        }
+      }
     }
-  }, [prefs, permission]);
+  }, [prefs, permission, swReg]);
 
   function notifyThread(threadId, title, body) {
     if (!prefs.threadReply) return;
