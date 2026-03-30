@@ -529,67 +529,158 @@ function useTypingPresenceLocal() {
 
 // ─── TASK ENTRAIDE (compact, par tâche) ──────────────────────────────────────
 function TaskHelp({ hwId, myUser }) {
-  const [helpers, setHelpers] = useState([]);
-  const [needers, setNeeders] = useState([]);
-  const [myStatus, setMyStatus] = useState(null);
-  const [open, setOpen] = useState(false);
+  const [helpers,   setHelpers]   = useState([]);
+  const [needers,   setNeeders]   = useState([]);
+  const [myStatus,  setMyStatus]  = useState(null);
+  const [open,      setOpen]      = useState(false);
+  const [busy,      setBusy]      = useState(false);
+  const [loaded,    setLoaded]    = useState(false);
 
-  useEffect(() => { if (open) load(); }, [open, hwId]);
+  // Charge dès l'ouverture ET recharge si hwId change
+  useEffect(() => {
+    if (open) { setLoaded(false); load(); }
+  }, [open, hwId]);
 
   async function load() {
-    const { data } = await supabase.from("task_help").select("*").eq("hw_id", hwId);
-    if (data) {
-      setHelpers(data.filter(r => r.status === "gere"));
-      setNeeders(data.filter(r => r.status === "aide"));
-      setMyStatus(data.find(r => r.username === (myUser || "Anonyme"))?.status || null);
-    }
+    const { data, error } = await supabase
+      .from("task_help")
+      .select("*")
+      .eq("hw_id", hwId);
+    if (error) { console.error("task_help load:", error); return; }
+    const rows = data || [];
+    setHelpers(rows.filter(r => r.status === "gere"));
+    setNeeders(rows.filter(r => r.status === "aide"));
+    setMyStatus(rows.find(r => r.username === (myUser || "Anonyme"))?.status ?? null);
+    setLoaded(true);
   }
 
-  async function toggle(status) {
+  async function handleToggle(status) {
+    if (busy) return;
+    setBusy(true);
     const name = myUser || "Anonyme";
-    const { data: existing } = await supabase.from("task_help").select("*").eq("hw_id", hwId).eq("username", name).single().catch(() => ({ data: null }));
+
+    // ✅ FIX : maybeSingle() au lieu de single().catch()
+    const { data: existing, error: fetchErr } = await supabase
+      .from("task_help")
+      .select("*")
+      .eq("hw_id", hwId)
+      .eq("username", name)
+      .maybeSingle();
+
+    if (fetchErr) { console.error("task_help fetch:", fetchErr); setBusy(false); return; }
+
     if (existing) {
-      if (existing.status === status) await supabase.from("task_help").delete().eq("id", existing.id);
-      else await supabase.from("task_help").update({ status }).eq("id", existing.id);
+      if (existing.status === status) {
+        // Désactive si on reclique le même bouton
+        const { error } = await supabase.from("task_help").delete().eq("id", existing.id);
+        if (error) console.error("task_help delete:", error);
+      } else {
+        // Change de statut
+        const { error } = await supabase.from("task_help").update({ status }).eq("id", existing.id);
+        if (error) console.error("task_help update:", error);
+      }
     } else {
-      await supabase.from("task_help").insert({ hw_id: hwId, username: name, status });
+      // Nouvelle entrée
+      const { error } = await supabase.from("task_help").insert({ hw_id: hwId, username: name, status });
+      if (error) console.error("task_help insert:", error);
     }
-    load();
+
+    await load();
+    setBusy(false);
   }
 
   const total = helpers.length + needers.length;
 
   return (
-    <div style={{ marginTop:6 }}>
-      <button onClick={() => setOpen(o => !o)} style={{
-        background:"none", border:"none", cursor:"pointer", fontSize:11, color:"var(--text3)", padding:0,
-        display:"flex", alignItems:"center", gap:4,
-      }}>
-        🤝 Entraide {total > 0 && <span style={{ background:"var(--border)", borderRadius:10, padding:"1px 6px", fontSize:10 }}>{total}</span>}
-        <span style={{ fontSize:9 }}>{open ? "▲" : "▼"}</span>
+    <div style={{ marginTop:8 }}>
+      {/* Bouton d'ouverture compact */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"var(--text3)", padding:0, display:"flex", alignItems:"center", gap:5 }}
+      >
+        <span>🤝 Entraide</span>
+        {total > 0 && (
+          <span style={{ background:helpers.length>0?"#d1fae5":needers.length>0?"#fef3c7":"var(--border)", color:helpers.length>0?"#065f46":needers.length>0?"#92400e":"var(--text3)", borderRadius:10, padding:"1px 7px", fontSize:10, fontWeight:600 }}>
+            {helpers.length > 0 && `✅${helpers.length}`}
+            {helpers.length > 0 && needers.length > 0 && " · "}
+            {needers.length > 0 && `🆘${needers.length}`}
+          </span>
+        )}
+        <span style={{ fontSize:9, color:"var(--text3)" }}>{open?"▲":"▼"}</span>
       </button>
 
       {open && (
-        <div style={{ marginTop:6, padding:"8px 10px", background:"var(--bg3)", borderRadius:8, border:"1px solid var(--border)", animation:"fadeUp 0.2s ease" }}>
-          <div style={{ display:"flex", gap:6, marginBottom:8, flexWrap:"wrap" }}>
-            <button onClick={() => toggle("gere")} style={{ padding:"3px 10px", borderRadius:20, fontSize:11, cursor:"pointer", fontWeight:600, border:`1.5px solid ${myStatus==="gere"?"#10B981":"var(--border)"}`, background:myStatus==="gere"?"#d1fae5":"var(--bbg)", color:myStatus==="gere"?"#065f46":"var(--text2)" }}>✅ Je gère</button>
-            <button onClick={() => toggle("aide")} style={{ padding:"3px 10px", borderRadius:20, fontSize:11, cursor:"pointer", fontWeight:600, border:`1.5px solid ${myStatus==="aide"?"#F59E0B":"var(--border)"}`, background:myStatus==="aide"?"#fef3c7":"var(--bbg)", color:myStatus==="aide"?"#92400e":"var(--text2)" }}>🆘 J'ai besoin d'aide</button>
+        <div style={{ marginTop:8, padding:"12px", background:"var(--bg3)", borderRadius:10, border:"1px solid var(--border)", animation:"fadeUp 0.2s ease" }}>
+
+          {/* Boutons d'action */}
+          <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+            <button
+              onClick={() => handleToggle("gere")}
+              disabled={busy}
+              style={{
+                padding:"6px 14px", borderRadius:20, fontSize:12, cursor:busy?"wait":"pointer", fontWeight:600,
+                border:`2px solid ${myStatus==="gere"?"#10B981":"var(--border)"}`,
+                background: myStatus==="gere" ? "#d1fae5" : "var(--bbg)",
+                color:       myStatus==="gere" ? "#065f46" : "var(--text2)",
+                opacity:     busy ? 0.6 : 1,
+                transition:  "all 0.15s",
+              }}
+            >
+              {myStatus==="gere" ? "✅ Je gère (actif)" : "✅ Je gère cette tâche"}
+            </button>
+
+            <button
+              onClick={() => handleToggle("aide")}
+              disabled={busy}
+              style={{
+                padding:"6px 14px", borderRadius:20, fontSize:12, cursor:busy?"wait":"pointer", fontWeight:600,
+                border:`2px solid ${myStatus==="aide"?"#F59E0B":"var(--border)"}`,
+                background: myStatus==="aide" ? "#fef3c7" : "var(--bbg)",
+                color:       myStatus==="aide" ? "#92400e" : "var(--text2)",
+                opacity:     busy ? 0.6 : 1,
+                transition:  "all 0.15s",
+              }}
+            >
+              {myStatus==="aide" ? "🆘 J'ai besoin d'aide (actif)" : "🆘 J'ai besoin d'aide"}
+            </button>
           </div>
-          <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
-            {helpers.length > 0 && (
-              <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
-                <span style={{ fontSize:10, color:"#059669", fontWeight:600 }}>Peuvent aider :</span>
-                {helpers.map(r => <span key={r.id} style={{ fontSize:10, background:"#d1fae5", color:"#065f46", padding:"1px 7px", borderRadius:20 }}>⭐{r.username}</span>)}
-              </div>
-            )}
-            {needers.length > 0 && (
-              <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
-                <span style={{ fontSize:10, color:"#d97706", fontWeight:600 }}>Cherchent de l'aide :</span>
-                {needers.map(r => <span key={r.id} style={{ fontSize:10, background:"#fef3c7", color:"#92400e", padding:"1px 7px", borderRadius:20 }}>{r.username}</span>)}
-              </div>
-            )}
-            {helpers.length === 0 && needers.length === 0 && <span style={{ fontSize:10, color:"var(--text3)" }}>Personne encore — sois le premier !</span>}
-          </div>
+
+          {/* Résultat */}
+          {!loaded ? (
+            <div style={{ fontSize:11, color:"var(--text3)" }}>Chargement...</div>
+          ) : (
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {helpers.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11, color:"#059669", fontWeight:700, marginBottom:4 }}>✅ Peuvent aider :</div>
+                  <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                    {helpers.map(r => (
+                      <span key={r.id} style={{ fontSize:12, background:"#d1fae5", color:"#065f46", padding:"3px 10px", borderRadius:20, fontWeight:600 }}>
+                        ⭐ {r.username}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {needers.length > 0 && (
+                <div>
+                  <div style={{ fontSize:11, color:"#d97706", fontWeight:700, marginBottom:4 }}>🆘 Ont besoin d'aide :</div>
+                  <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                    {needers.map(r => (
+                      <span key={r.id} style={{ fontSize:12, background:"#fef3c7", color:"#92400e", padding:"3px 10px", borderRadius:20, fontWeight:600 }}>
+                        {r.username}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {helpers.length === 0 && needers.length === 0 && (
+                <div style={{ fontSize:11, color:"var(--text3)", fontStyle:"italic" }}>
+                  Personne encore — sois le premier à indiquer ton statut !
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -603,8 +694,8 @@ function HwItem({ item, subject, myUser, onToggle, onDelete }) {
   function handleToggle() {
     if (!item.done) {
       setRemoving(true);
-      setTimeout(() => { onToggle(); setRemoving(false); }, 320);
-    } else onToggle();
+      setTimeout(() => { onToggle(item.id, item.done); setRemoving(false); }, 320);
+    } else onToggle(item.id, item.done);
   }
 
   return (
@@ -808,6 +899,7 @@ export default function App() {
           pushToast("newHomework", `📚 Nouveau devoir — ${sub?.name||p.new.subject_id}`, p.new.text?.slice(0,70));
         }
       })
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"},()=>loadHomework())
       .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"},()=>loadHomework())
       .subscribe();
     return () => supabase.removeChannel(ch);
@@ -835,18 +927,7 @@ export default function App() {
     await supabase.from("devoirs").insert({subject_id:selectedSubject,text:newHW.text.trim(),date:newHW.date||null,done:false,added_by:username.trim()||"Anonyme"});
     setNewHW({text:"",date:""});
   }
-  // ── Done personnel : stocké en localStorage, pas dans Supabase ──
-  const [personalDone, setPersonalDone] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("personalDone")) || {}; } catch { return {}; }
-  });
-  function toggleDone(id) {
-    setPersonalDone(prev => {
-      const updated = { ...prev, [id]: !prev[id] };
-      localStorage.setItem("personalDone", JSON.stringify(updated));
-      return updated;
-    });
-  }
-  function isDone(id) { return !!personalDone[id]; }
+  async function toggleDone(id,done) { await supabase.from("devoirs").update({done:!done}).eq("id",id); setHomework(prev=>prev.map(h=>h.id===id?{...h,done:!done}:h)); }
   async function deleteHW(id) { await supabase.from("devoirs").delete().eq("id",id); setHomework(prev=>prev.filter(h=>h.id!==id)); }
 
   async function likeMessage(msg, table="messages") {
@@ -900,7 +981,7 @@ export default function App() {
   }
 
   const hwFor    = id => homework.filter(h=>h.subject_id===id);
-  const pending  = id => hwFor(id).filter(h=>!isDone(h.id)).length;
+  const pending  = id => hwFor(id).filter(h=>!h.done).length;
   const totalPending = SUBJECTS.reduce((a,s)=>a+pending(s.id),0);
   const subject  = SUBJECTS.find(s=>s.id===selectedSubject);
   const threadsFor = id => threads.filter(t=>t.subject_id===id);
@@ -1068,8 +1149,8 @@ export default function App() {
             <div style={{textAlign:"center",color:"var(--text3)",fontSize:14,padding:"2rem 0"}}>Aucun devoir 🎉</div>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {[...hwFor(subject.id).filter(h=>!isDone(h.id)),...hwFor(subject.id).filter(h=>isDone(h.id))].map(item=>(
-                <HwItem key={item.id} item={{...item, done: isDone(item.id)}} subject={subject} myUser={myUser} onToggle={()=>toggleDone(item.id)} onDelete={deleteHW}/>
+              {[...hwFor(subject.id).filter(h=>!h.done),...hwFor(subject.id).filter(h=>h.done)].map(item=>(
+                <HwItem key={item.id} item={item} subject={subject} myUser={myUser} onToggle={toggleDone} onDelete={deleteHW}/>
               ))}
             </div>
           )}
