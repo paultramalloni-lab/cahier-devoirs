@@ -49,11 +49,10 @@ const NOTIF_TYPES = [
   { key:"threadReply",   icon:"🗂️", label:"Réponse dans un fil de discussion" },
 ];
 
-function useNotifications(myUser) {
+function useNotifications() {
   const [permission, setPermission] = useState(() => {
     try { return Notification.permission; } catch { return "denied"; }
   });
-  const [swReg, setSwReg] = useState(null);
   const [prefs, setPrefs] = useState(() => {
     try { return JSON.parse(localStorage.getItem("notifPrefs")) || { newHomework:true, chatMessage:true, helpRequest:true, threadReply:true }; }
     catch { return { newHomework:true, chatMessage:true, helpRequest:true, threadReply:true }; }
@@ -64,14 +63,13 @@ function useNotifications(myUser) {
   const [inbox, setInbox]   = useState([]);
   const [unread, setUnread] = useState(0);
 
-  // Enregistre le Service Worker au démarrage
-  useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js")
-        .then(reg => setSwReg(reg))
-        .catch(() => {});
-    }
-  }, []);
+  // Ref toujours à jour — évite le problème de closure stale dans les useEffect realtime
+  const prefsRef        = useRef(prefs);
+  const permissionRef   = useRef(permission);
+  const watchedRef      = useRef(watchedThreads);
+  useEffect(() => { prefsRef.current = prefs; },              [prefs]);
+  useEffect(() => { permissionRef.current = permission; },    [permission]);
+  useEffect(() => { watchedRef.current = watchedThreads; },   [watchedThreads]);
 
   async function requestPermission() {
     try {
@@ -81,49 +79,41 @@ function useNotifications(myUser) {
     } catch { return "denied"; }
   }
 
-  // Envoie la notif au Service Worker (fonctionne onglet caché ET onglet fermé si SW actif)
-  function pushViaServiceWorker(title, body) {
-    if (!swReg) return;
-    if (swReg.active) {
-      swReg.active.postMessage({ type: "NOTIFY", title, body });
-    }
-  }
-
+  // notify utilise les refs → toujours les valeurs à jour même dans les vieux useEffect
   const notify = useCallback((type, title, body) => {
-    if (!prefs[type]) return;
-    // Toast in-app
+    if (!prefsRef.current[type]) return;
     const n = { id: Date.now() + Math.random(), type, title, body, time: new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}), read:false };
     setInbox(prev => [n,...prev].slice(0,60));
     setUnread(u => u+1);
-    // Notification navigateur via Service Worker (marche même onglet en arrière-plan)
-    if (permission === "granted") {
-      if (document.hidden) {
-        // Essaie d'abord via SW (plus fiable)
-        if (swReg?.active) {
-          swReg.active.postMessage({ type: "NOTIFY", title, body });
-        } else {
-          try { new Notification(title, { body, icon:"/favicon.svg" }); } catch {}
-        }
-      }
+    // Notification navigateur native (quand onglet en arrière-plan)
+    if (permissionRef.current === "granted" && document.hidden) {
+      try { new Notification(title, { body }); } catch {}
     }
-  }, [prefs, permission, swReg]);
+  }, []); // [] car on utilise les refs, jamais stale
+
+  // notifyRef pour que les useEffect realtime appellent toujours la bonne version
+  const notifyRef = useRef(notify);
+  useEffect(() => { notifyRef.current = notify; }, [notify]);
 
   function notifyThread(threadId, title, body) {
-    if (!prefs.threadReply) return;
-    if (!watchedThreads.includes(threadId)) return;
-    notify("threadReply", title, body);
+    if (!prefsRef.current.threadReply) return;
+    if (!watchedRef.current.includes(threadId)) return;
+    notifyRef.current("threadReply", title, body);
   }
+  const notifyThreadRef = useRef(notifyThread);
+  useEffect(() => { notifyThreadRef.current = notifyThread; });
 
   function watchThread(id) {
-    const updated = watchedThreads.includes(id) ? watchedThreads.filter(x=>x!==id) : [...watchedThreads, id];
+    const updated = watchedRef.current.includes(id)
+      ? watchedRef.current.filter(x=>x!==id)
+      : [...watchedRef.current, id];
     setWatchedThreads(updated);
     localStorage.setItem("watchedThreads", JSON.stringify(updated));
   }
 
   function isWatching(id) { return watchedThreads.includes(id); }
-
-  function markAllRead() { setUnread(0); setInbox(p=>p.map(n=>({...n,read:true}))); }
-  function clearAll()    { setInbox([]); setUnread(0); }
+  function markAllRead()   { setUnread(0); setInbox(p=>p.map(n=>({...n,read:true}))); }
+  function clearAll()      { setInbox([]); setUnread(0); }
 
   function updatePref(key, val) {
     const updated = {...prefs,[key]:val};
@@ -131,7 +121,7 @@ function useNotifications(myUser) {
     localStorage.setItem("notifPrefs", JSON.stringify(updated));
   }
 
-  return { permission, requestPermission, prefs, updatePref, notify, notifyThread, watchThread, isWatching, inbox, unread, markAllRead, clearAll };
+  return { permission, requestPermission, prefs, updatePref, notify, notifyRef, notifyThreadRef, watchThread, isWatching, inbox, unread, markAllRead, clearAll };
 }
 
 // ─── TOAST NOTIFICATION ───────────────────────────────────────────────────────
@@ -529,14 +519,12 @@ function useTypingPresenceLocal() {
 
 // ─── TASK ENTRAIDE (compact, par tâche) ──────────────────────────────────────
 function TaskHelp({ hwId, myUser }) {
-  const [helpers,  setHelpers]  = useState([]);
-  const [needers,  setNeeders]  = useState([]);
+  const [helpers, setHelpers] = useState([]);
+  const [needers, setNeeders] = useState([]);
   const [myStatus, setMyStatus] = useState(null);
-  const [open,     setOpen]     = useState(false);
-  const [busy,     setBusy]     = useState(false);
-  const [loaded,   setLoaded]   = useState(false);
+  const [open, setOpen] = useState(false);
 
-  useEffect(() => { load(); }, [hwId]);
+  useEffect(() => { if (open) load(); }, [open, hwId]);
 
   async function load() {
     const { data } = await supabase.from("task_help").select("*").eq("hw_id", hwId);
@@ -544,113 +532,54 @@ function TaskHelp({ hwId, myUser }) {
       setHelpers(data.filter(r => r.status === "gere"));
       setNeeders(data.filter(r => r.status === "aide"));
       setMyStatus(data.find(r => r.username === (myUser || "Anonyme"))?.status || null);
-      setLoaded(true);
     }
   }
 
   async function toggle(status) {
-    if (busy) return;
-    setBusy(true);
     const name = myUser || "Anonyme";
-    const { data: existing } = await supabase.from("task_help").select("*").eq("hw_id", hwId).eq("username", name).maybeSingle();
+    const { data: existing } = await supabase.from("task_help").select("*").eq("hw_id", hwId).eq("username", name).single().catch(() => ({ data: null }));
     if (existing) {
       if (existing.status === status) await supabase.from("task_help").delete().eq("id", existing.id);
       else await supabase.from("task_help").update({ status }).eq("id", existing.id);
     } else {
       await supabase.from("task_help").insert({ hw_id: hwId, username: name, status });
     }
-    await load();
-    setBusy(false);
+    load();
   }
 
   const total = helpers.length + needers.length;
 
   return (
-    <div style={{ marginTop:10 }}>
+    <div style={{ marginTop:6 }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        background:"none", border:"none", cursor:"pointer", fontSize:11, color:"var(--text3)", padding:0,
+        display:"flex", alignItems:"center", gap:4,
+      }}>
+        🤝 Entraide {total > 0 && <span style={{ background:"var(--border)", borderRadius:10, padding:"1px 6px", fontSize:10 }}>{total}</span>}
+        <span style={{ fontSize:9 }}>{open ? "▲" : "▼"}</span>
+      </button>
 
-      {/* Boutons toujours visibles */}
-      <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-        <button
-          onClick={() => { toggle("gere"); setOpen(true); }}
-          disabled={busy}
-          style={{
-            display:"flex", alignItems:"center", gap:6,
-            padding:"7px 16px", borderRadius:22, fontSize:13,
-            cursor: busy ? "wait" : "pointer", fontWeight:700,
-            border: myStatus==="gere" ? "2px solid #10B981" : "2px solid #10B98166",
-            background: myStatus==="gere" ? "#10B981" : "transparent",
-            color:       myStatus==="gere" ? "#fff"    : "#10B981",
-            transition:  "all 0.2s",
-            boxShadow:   myStatus==="gere" ? "0 2px 10px #10B98144" : "none",
-          }}
-        >
-          ✅ Je gère
-          {helpers.length > 0 && (
-            <span style={{ background: myStatus==="gere" ? "rgba(255,255,255,0.3)" : "#10B98122", borderRadius:10, padding:"1px 7px", fontSize:11, fontWeight:700 }}>
-              {helpers.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => { toggle("aide"); setOpen(true); }}
-          disabled={busy}
-          style={{
-            display:"flex", alignItems:"center", gap:6,
-            padding:"7px 16px", borderRadius:22, fontSize:13,
-            cursor: busy ? "wait" : "pointer", fontWeight:700,
-            border: myStatus==="aide" ? "2px solid #ef4444" : "2px solid #ef444466",
-            background: myStatus==="aide" ? "#ef4444" : "transparent",
-            color:       myStatus==="aide" ? "#fff"    : "#ef4444",
-            transition:  "all 0.2s",
-            boxShadow:   myStatus==="aide" ? "0 2px 10px #ef444444" : "none",
-            animation:   needers.length > 0 && myStatus !== "aide" ? "pulse 2s ease infinite" : "none",
-          }}
-        >
-          🆘 Besoin d'aide
-          {needers.length > 0 && (
-            <span style={{ background: myStatus==="aide" ? "rgba(255,255,255,0.3)" : "#ef444422", borderRadius:10, padding:"1px 7px", fontSize:11, fontWeight:700 }}>
-              {needers.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setOpen(o => !o)}
-          style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"var(--text3)", padding:"4px 6px" }}
-        >
-          {open ? "▲ Masquer" : "▼ Voir qui"}
-        </button>
-      </div>
-
-      {/* Panneau détail */}
       {open && (
-        <div style={{ marginTop:10, padding:"12px 14px", background:"var(--bg3)", borderRadius:10, border:"1px solid var(--border)", animation:"fadeUp 0.2s ease" }}>
-          {!loaded ? (
-            <div style={{ fontSize:12, color:"var(--text3)" }}>Chargement...</div>
-          ) : (
-            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              <div>
-                <div style={{ fontSize:12, color:"#059669", fontWeight:700, marginBottom:5 }}>✅ Peuvent aider ({helpers.length}) :</div>
-                {helpers.length === 0
-                  ? <span style={{ fontSize:12, color:"var(--text3)", fontStyle:"italic" }}>Personne pour l'instant</span>
-                  : <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                      {helpers.map(r => <span key={r.id} style={{ fontSize:13, background:"#10B981", color:"#fff", padding:"4px 12px", borderRadius:20, fontWeight:600 }}>⭐ {r.username}</span>)}
-                    </div>
-                }
+        <div style={{ marginTop:6, padding:"8px 10px", background:"var(--bg3)", borderRadius:8, border:"1px solid var(--border)", animation:"fadeUp 0.2s ease" }}>
+          <div style={{ display:"flex", gap:6, marginBottom:8, flexWrap:"wrap" }}>
+            <button onClick={() => toggle("gere")} style={{ padding:"3px 10px", borderRadius:20, fontSize:11, cursor:"pointer", fontWeight:600, border:`1.5px solid ${myStatus==="gere"?"#10B981":"var(--border)"}`, background:myStatus==="gere"?"#d1fae5":"var(--bbg)", color:myStatus==="gere"?"#065f46":"var(--text2)" }}>✅ Je gère</button>
+            <button onClick={() => toggle("aide")} style={{ padding:"3px 10px", borderRadius:20, fontSize:11, cursor:"pointer", fontWeight:600, border:`1.5px solid ${myStatus==="aide"?"#F59E0B":"var(--border)"}`, background:myStatus==="aide"?"#fef3c7":"var(--bbg)", color:myStatus==="aide"?"#92400e":"var(--text2)" }}>🆘 J'ai besoin d'aide</button>
+          </div>
+          <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
+            {helpers.length > 0 && (
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
+                <span style={{ fontSize:10, color:"#059669", fontWeight:600 }}>Peuvent aider :</span>
+                {helpers.map(r => <span key={r.id} style={{ fontSize:10, background:"#d1fae5", color:"#065f46", padding:"1px 7px", borderRadius:20 }}>⭐{r.username}</span>)}
               </div>
-              <div>
-                <div style={{ fontSize:12, color:"#ef4444", fontWeight:700, marginBottom:5 }}>🆘 Ont besoin d'aide ({needers.length}) :</div>
-                {needers.length === 0
-                  ? <span style={{ fontSize:12, color:"var(--text3)", fontStyle:"italic" }}>Personne pour l'instant</span>
-                  : <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-                      {needers.map(r => <span key={r.id} style={{ fontSize:13, background:"#ef4444", color:"#fff", padding:"4px 12px", borderRadius:20, fontWeight:600 }}>{r.username}</span>)}
-                    </div>
-                }
+            )}
+            {needers.length > 0 && (
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }}>
+                <span style={{ fontSize:10, color:"#d97706", fontWeight:600 }}>Cherchent de l'aide :</span>
+                {needers.map(r => <span key={r.id} style={{ fontSize:10, background:"#fef3c7", color:"#92400e", padding:"1px 7px", borderRadius:20 }}>{r.username}</span>)}
               </div>
-              {total === 0 && <div style={{ fontSize:12, color:"var(--text3)", fontStyle:"italic", textAlign:"center" }}>Sois le premier à indiquer ton statut !</div>}
-            </div>
-          )}
+            )}
+            {helpers.length === 0 && needers.length === 0 && <span style={{ fontSize:10, color:"var(--text3)" }}>Personne encore — sois le premier !</span>}
+          </div>
         </div>
       )}
     </div>
@@ -815,15 +744,18 @@ export default function App() {
   const threadFileRef = useRef(null);
 
   // ── Notifications ──
-  const notif = useNotifications(username || "Anonyme");
+  const notif = useNotifications();
   const [toasts, setToasts] = useState([]);
 
+  // pushToast via ref → jamais stale même dans les vieux useEffect realtime
+  const pushToastRef = useRef(null);
   function pushToast(type, title, body) {
-    notif.notify(type, title, body);
+    notif.notifyRef.current(type, title, body);
     const id = Date.now() + Math.random();
     setToasts(p => [...p, { id, type, title, body }]);
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4500);
   }
+  useEffect(() => { pushToastRef.current = pushToast; });
   function dismissToast(id) { setToasts(p => p.filter(t => t.id !== id)); }
 
   // Ghost typing for main chat
@@ -838,7 +770,7 @@ export default function App() {
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"messages"}, p => {
         setMessages(prev=>[...prev,p.new]);
         if (p.new.username !== (username || "Anonyme")) {
-          pushToast("chatMessage", `💬 ${p.new.username}`, p.new.text?.slice(0,60) || "a envoyé un fichier");
+          pushToastRef.current?.("chatMessage", `💬 ${p.new.username}`, p.new.text?.slice(0,60) || "a envoyé un fichier");
         }
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"messages"}, p => setMessages(prev=>prev.map(m=>m.id===p.new.id?p.new:m)))
@@ -852,7 +784,7 @@ export default function App() {
         if(p.new.thread_id===selectedThread.id) {
           setThreadMsgs(prev=>[...prev,p.new]);
           if (p.new.username !== (username || "Anonyme")) {
-            notif.notifyThread(selectedThread.id, `🗂️ ${p.new.username}`, `dans "${selectedThread.title}" : ${p.new.text?.slice(0,50)||"fichier"}`);
+            notif.notifyThreadRef.current(selectedThread.id, `🗂️ ${p.new.username}`, `dans "${selectedThread.title}" : ${p.new.text?.slice(0,50)||"fichier"}`);
           }
         }
       })
@@ -866,7 +798,7 @@ export default function App() {
         loadHomework();
         if (p.new.added_by !== (username || "Anonyme")) {
           const sub = SUBJECTS.find(s=>s.id===p.new.subject_id);
-          pushToast("newHomework", `📚 Nouveau devoir — ${sub?.name||p.new.subject_id}`, p.new.text?.slice(0,70));
+          pushToastRef.current?.("newHomework", `📚 Nouveau devoir — ${sub?.name||p.new.subject_id}`, p.new.text?.slice(0,70));
         }
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"},()=>loadHomework())
@@ -878,7 +810,7 @@ export default function App() {
     const ch = supabase.channel("rt-task-help")
       .on("postgres_changes",{event:"INSERT",schema:"public",table:"task_help"}, p => {
         if (p.new.status === "aide" && p.new.username !== (username || "Anonyme")) {
-          pushToast("helpRequest", `🆘 ${p.new.username} a besoin d'aide`, "Cliquez pour voir quelle tâche");
+          pushToastRef.current?.("helpRequest", `🆘 ${p.new.username} a besoin d'aide`, "Cliquez pour voir quelle tâche");
         }
       })
       .subscribe();
