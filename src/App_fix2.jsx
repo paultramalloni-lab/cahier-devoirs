@@ -863,7 +863,7 @@ export default function App() {
         }
       })
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"}, p => setHomework(prev=>prev.map(h=>h.id===p.new.id?p.new:h)))
-      .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"}, p => setHomework(prev=>prev.filter(h=>h.id!==p.old?.id)))
+      .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"},()=>loadHomework())
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, [username]);
