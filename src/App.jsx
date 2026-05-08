@@ -862,8 +862,8 @@ export default function App() {
           pushToastRef.current?.("newHomework", `📚 Nouveau devoir — ${sub?.name||p.new.subject_id}`, p.new.text?.slice(0,70));
         }
       })
-      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"},()=>loadHomework())
-      .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"},()=>loadHomework())
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"devoirs"}, p => setHomework(prev=>prev.map(h=>h.id===p.new.id?p.new:h)))
+      .on("postgres_changes",{event:"DELETE",schema:"public",table:"devoirs"}, p => setHomework(prev=>prev.filter(h=>h.id!==p.old?.id)))
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, [username]);
@@ -890,7 +890,7 @@ export default function App() {
     await supabase.from("devoirs").insert({subject_id:selectedSubject,text:newHW.text.trim(),date:newHW.date||null,done:false,added_by:username.trim()||"Anonyme"});
     setNewHW({text:"",date:""});
   }
-  async function toggleDone(id,done) { await supabase.from("devoirs").update({done:!done}).eq("id",id); setHomework(prev=>prev.map(h=>h.id===id?{...h,done:!done}:h)); }
+  async function toggleDone(id,done) { await supabase.from("devoirs").update({done:!done}).eq("id",id); }
   async function deleteHW(id) { await supabase.from("devoirs").delete().eq("id",id); setHomework(prev=>prev.filter(h=>h.id!==id)); }
 
   async function likeMessage(msg, table="messages") {
